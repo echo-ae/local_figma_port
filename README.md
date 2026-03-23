@@ -1,10 +1,32 @@
 # Local Figma Port
 
-Export scoped Figma design context for AI coding agents.
+A local-first bridge between Figma and AI coding agents.
 
-For developers using Codex, Claude Code, or Cursor with Figma-driven frontend work.
+Local Figma Port connects Figma design data directly to AI coding tools.
 
-Local Figma Port is a source-available toolkit made of four parts:
+It gives agents like Codex, Claude Code, and Cursor direct access to normalized design data
+(frames, components, styles) — without manual export.
+
+It does not require a paid Figma account or Figma Dev Mode.
+
+## Who is this for
+
+- Developers using AI coding tools with Figma
+- Teams building UI from structured design systems
+- Anyone tired of manual Figma → code handoff
+
+## Quickstart
+
+1. Install the tool
+2. Start local server
+3. In Figma, use the plugin to export the selected node
+4. Query via CLI or MCP
+
+Takes under 2 minutes.
+
+It is built as a local-first system with strict control over exported scope.
+
+It consists of four parts:
 
 - a Figma plugin for scoped export
 - a local MCP server
@@ -19,11 +41,13 @@ If your Figma file is structured well, you can also export a UI kit separately a
 
 ## Demo
 
+Short walkthrough: exporting a design slice and using it with an agent.
+
 ![Demo](https://github.com/echo-ae/local_figma_port/releases/download/v1.0.0/screencast.gif)
 
 ## Problem
 
-AI coding agents struggle with large design files.
+AI coding agents struggle with large, unstructured design files.
 
 Passing an entire Figma file into context is noisy, expensive, and usually leads to weaker code generation. The agent has to search through too much unrelated design data, while the developer only needs one frame, one flow, or one component.
 
@@ -31,7 +55,7 @@ Passing an entire Figma file into context is noisy, expensive, and usually leads
 
 Local Figma Port lets you export only the relevant part of a Figma design and send it to a local MCP server.
 
-The raw export is validated and normalized into a structure that is much easier for coding agents to query than raw Figma JSON. Agents receive a focused design context instead of a giant design dump, which leads to much better implementation quality.
+The raw export is validated and normalized into a structure that is easier for agents to query than raw Figma JSON. Agents receive a focused design context instead of a giant design dump, which leads to much better implementation quality.
 
 ## Features
 
@@ -59,7 +83,7 @@ The MCP server does not automatically ingest the whole Figma file. It only knows
 
 ## Result
 
-Instead of asking an agent to reason over an entire design system, you give it exactly the design slice it needs. In practice, frontend implementation becomes much closer to "autopilot" for well-structured UI work.
+Instead of asking an agent to reason over an entire design system, you give it exactly the design slice it needs. In practice, frontend implementation becomes close to "autopilot" for well-structured UI work.
 
 ## Installation
 
