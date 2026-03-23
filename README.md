@@ -8,8 +8,6 @@ It gives agents like Codex, Claude Code, and Cursor direct access to normalized 
 (frames, components, styles) — without manual export.
 
 It does not require a paid Figma account or Figma Dev Mode.
-This works without Dev Mode only for Figma projects you own.
-If you need to use someone else's project, first save a copy into your own drafts or workspace so you become the owner, then export from that copy.
 
 ## Who is this for
 
@@ -20,15 +18,56 @@ If you need to use someone else's project, first save a copy into your own draft
 ## Quickstart
 
 1. Install the tool
-2. Start local server
-3. In Figma, use the plugin to export the selected node
-4. Query via CLI or MCP
+2. Start the local server
+3. In Figma, import the plugin via `manifest.json` (see below), then export a node
+4. In your coding agent, use the shortcut `$Local Figma Port` followed by your prompt
 
 Takes under 2 minutes.
 
+## Figma Plugin Setup
+
+To use the Local Figma Port plugin in Figma:
+
+1. Open Figma Desktop
+2. Go to `Plugins → Development → Import plugin from manifest...`
+3. Select `packages/figma-exporter-plugin/manifest.json`
+4. Run `Plugins → Development → Local Figma Port`
+
+You can now select a node and export it using the plugin.
+
+Requires Figma Desktop (plugin development mode is not available in the browser).
+
+## Using the Skill
+
+After exporting a design slice, the context becomes available to your coding agent.
+
+Use the Local Figma Port skill in your agent:
+
+`$Local Figma Port implement this screen in React`
+
+The shortcut tells the agent to use the exported Local Figma Port context instead of guessing from scratch.
+
+The more specific your prompt, the better the result.
+
+You can combine it with any prompt:
+- `$Local Figma Port build this component`
+- `$Local Figma Port generate layout with Tailwind`
+- `$Local Figma Port extract styles and structure`
+
+You can check what is in MCP now:
+- `$Local Figma Port what do you see?`
+
+## Figma Access Note
+
+Works without Dev Mode only for Figma projects you own.
+
+To use designs from someone else:
+- duplicate the file into your own drafts or workspace
+- export from your copy
+
 It is built as a local-first system with strict control over exported scope.
 
-It consists of four parts:
+At a high level, it consists of four parts:
 
 - a Figma plugin for scoped export
 - a local MCP server
@@ -77,7 +116,7 @@ The raw export is validated and normalized into a structure that is easier for a
 3. The bundle is sent to the local import endpoint at `http://127.0.0.1:7331/import-bundle`.
 4. The importer/optimizer validates the bundle and rewrites it into a normalized local store.
 5. The local MCP server exposes that exported scope to coding agents.
-6. The repository skill helps agents traverse the exported scope without guessing.
+6. The Local Figma Port skill lets agents access and traverse the exported scope without guessing.
 
 If auto-post fails, the plugin can fall back to a downloadable bundle JSON for manual import.
 
