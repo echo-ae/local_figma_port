@@ -8,6 +8,8 @@ It gives agents like Codex, Claude Code, and Cursor direct access to normalized 
 (frames, components, styles) — without manual export.
 
 It does not require a paid Figma account or Figma Dev Mode.
+This works without Dev Mode only for Figma projects you own.
+If you need to use someone else's project, first save a copy into your own drafts or workspace so you become the owner, then export from that copy.
 
 ## Who is this for
 
