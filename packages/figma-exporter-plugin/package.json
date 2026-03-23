@@ -1,0 +1,14 @@
+{
+  "name": "figma-exporter-plugin",
+  "version": "0.9.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit && esbuild src/main.ts --bundle --format=iife --platform=browser --target=es2017 --outfile=dist/main.js",
+    "check-bundle": "node check-bundle.mjs"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.109.0",
+    "esbuild": "^0.27.3",
+    "typescript": "^5.6.2"
+  }
+}

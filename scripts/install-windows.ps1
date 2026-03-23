@@ -1,0 +1,527 @@
+[CmdletBinding()]
+param(
+    [switch]$Codex,
+    [switch]$CodexApp,
+    [switch]$ClaudeCode,
+    [switch]$Cursor,
+    [switch]$All,
+    [string]$Targets,
+    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$StateDir = $(if ($env:LOCAL_FIGMA_PORT_STATE_DIR) { $env:LOCAL_FIGMA_PORT_STATE_DIR } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "LocalFigmaPort" } else { Join-Path $env:USERPROFILE "AppData/Local/LocalFigmaPort" }),
+    [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE ".codex" }),
+    [string]$CodexAppData = $(if ($env:CODEX_APP_DATA_DIR) { $env:CODEX_APP_DATA_DIR } elseif ($env:APPDATA) { Join-Path $env:APPDATA "Codex" } else { Join-Path $env:USERPROFILE "AppData/Roaming/Codex" }),
+    [string]$CodexAppExe = $(if ($env:CODEX_APP_EXE) { $env:CODEX_APP_EXE } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "Programs/Codex/Codex.exe" } else { Join-Path $env:USERPROFILE "AppData/Local/Programs/Codex/Codex.exe" }),
+    [string]$ClaudeHome = $(if ($env:CLAUDE_HOME) { $env:CLAUDE_HOME } else { Join-Path $env:USERPROFILE ".claude" }),
+    [string]$CursorHome = (Join-Path $env:USERPROFILE ".cursor")
+)
+
+$ErrorActionPreference = "Stop"
+
+$ProjectRoot = (Resolve-Path $ProjectRoot).Path
+$StateDir = [System.IO.Path]::GetFullPath($StateDir)
+$RepoSkill = Join-Path $ProjectRoot "SKILL.md"
+$RepoMcpDir = Join-Path $ProjectRoot "packages/mcp-server"
+$RepoMcpEntry = Join-Path $ProjectRoot "packages/mcp-server/dist/mcp-stdio.js"
+$ProjectData = Join-Path $ProjectRoot "data"
+$RepoData = Join-Path $StateDir "data"
+$RepoSqlite = Join-Path $RepoData "design_store.sqlite"
+$Timestamp = Get-Date -Format "yyyyMMddHHmmss"
+
+$AgentsMarkerStart = "<!-- FIGMA PORT MANAGED BLOCK START -->"
+$AgentsMarkerEnd = "<!-- FIGMA PORT MANAGED BLOCK END -->"
+$ClaudeMarkerStart = "<!-- FIGMA PORT CLAUDE BLOCK START -->"
+$ClaudeMarkerEnd = "<!-- FIGMA PORT CLAUDE BLOCK END -->"
+$CodexTomlMarkerStart = "# >>> FIGMA PORT MCP START >>>"
+$CodexTomlMarkerEnd = "# <<< FIGMA PORT MCP END <<<"
+
+function Show-Usage {
+    @"
+usage: .\scripts\install-windows.ps1 [-Codex] [-ClaudeCode] [-Cursor] [-All]
+
+options:
+  -Codex                 install for Codex
+  -CodexApp              install for Codex App
+  -ClaudeCode            install for Claude Code
+  -Cursor                install for Cursor
+  -All                   install for all supported targets
+  -Targets LIST          install for comma-separated target numbers: 1=Codex, 2=Codex App, 3=Claude Code, 4=Cursor
+  -ProjectRoot PATH      override repository root
+  -StateDir PATH         override Local Figma Port state root
+  -CodexHome PATH        override Codex home
+  -CodexAppData PATH     override Codex App data dir
+  -CodexAppExe PATH      override Codex App executable path
+  -ClaudeHome PATH       override Claude home
+  -CursorHome PATH       override Cursor home
+"@
+}
+
+function To-PosixPath([string]$Path) {
+    return ($Path -replace "\\", "/")
+}
+
+function Apply-TargetToken {
+    param([string]$Token)
+
+    switch ($Token.ToLowerInvariant()) {
+        "1" { $script:Codex = $true; return }
+        "codex" { $script:Codex = $true; return }
+        "2" { $script:CodexApp = $true; return }
+        "codex-app" { $script:CodexApp = $true; return }
+        "codex_app" { $script:CodexApp = $true; return }
+        "3" { $script:ClaudeCode = $true; return }
+        "claude" { $script:ClaudeCode = $true; return }
+        "claude-code" { $script:ClaudeCode = $true; return }
+        "claude_code" { $script:ClaudeCode = $true; return }
+        "4" { $script:Cursor = $true; return }
+        "cursor" { $script:Cursor = $true; return }
+        default { throw "Unknown target token: $Token" }
+    }
+}
+
+function Apply-TargetsCsv {
+    param([string]$Csv)
+
+    $script:Codex = $false
+    $script:CodexApp = $false
+    $script:ClaudeCode = $false
+    $script:Cursor = $false
+
+    if ($Csv -match '^\s*all\s*$') {
+        $script:Codex = $true
+        $script:CodexApp = $true
+        $script:ClaudeCode = $true
+        $script:Cursor = $true
+        return
+    }
+
+    foreach ($token in ($Csv -split ',')) {
+        $trimmed = $token.Trim()
+        if (-not [string]::IsNullOrWhiteSpace($trimmed)) {
+            Apply-TargetToken -Token $trimmed
+        }
+    }
+}
+
+function Remove-ManagedBlockText {
+    param(
+        [string]$Text,
+        [string]$StartMarker,
+        [string]$EndMarker
+    )
+
+    $lines = $Text -split "`r?`n"
+    $skip = $false
+    $output = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $lines) {
+        if ($line -eq $StartMarker) {
+            $skip = $true
+            continue
+        }
+        if ($line -eq $EndMarker) {
+            $skip = $false
+            continue
+        }
+        if (-not $skip) {
+            $output.Add($line)
+        }
+    }
+    return ($output -join "`n").TrimEnd()
+}
+
+function Require-Command {
+    param([string]$Name)
+
+    if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
+        throw "Missing required command: $Name"
+    }
+}
+
+function Test-SkillFrontmatter {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path -PathType Leaf)) {
+        throw "Missing skill file: $Path"
+    }
+
+    $firstLine = Get-Content -LiteralPath $Path -TotalCount 1
+    if ($firstLine -ne "---") {
+        throw "Skill file is missing opening YAML frontmatter delimiter: $Path"
+    }
+}
+
+function Test-JsonFileIfPresent {
+    param(
+        [string]$Path,
+        [string]$Label
+    )
+
+    if (-not (Test-Path $Path)) {
+        return
+    }
+
+    $raw = Get-Content -Raw $Path
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return
+    }
+
+    try {
+        $null = $raw | ConvertFrom-Json -AsHashtable
+    } catch {
+        throw "Invalid JSON in $Label: $Path`n$($_.Exception.Message)"
+    }
+}
+
+function Write-WithBackup {
+    param(
+        [string]$Path,
+        [string]$Content
+    )
+
+    if ((Test-Path $Path) -and ((Get-Content -Raw $Path) -eq $Content)) {
+        Write-Host "[install-windows] unchanged: $Path"
+        return
+    }
+
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+    if (Test-Path $Path) {
+        $backupPath = "$Path.local-figma-port.$Timestamp.bak"
+        Copy-Item $Path $backupPath -Force
+        Write-Host "[install-windows] backup: $backupPath"
+    }
+    Set-Content -Path $Path -Value $Content -NoNewline:$false
+    Write-Host "[install-windows] wrote: $Path"
+}
+
+function Set-MarkdownManagedBlock {
+    param(
+        [string]$Path,
+        [string]$StartMarker,
+        [string]$EndMarker,
+        [string]$Block
+    )
+
+    $baseText = ""
+    if (Test-Path $Path) {
+        $baseText = Remove-ManagedBlockText -Text (Get-Content -Raw $Path) -StartMarker $StartMarker -EndMarker $EndMarker
+    }
+
+    $newText = if ([string]::IsNullOrWhiteSpace($baseText)) {
+        "$StartMarker`n$Block`n$EndMarker`n"
+    } else {
+        "$baseText`n`n$StartMarker`n$Block`n$EndMarker`n"
+    }
+
+    Write-WithBackup -Path $Path -Content $newText
+}
+
+function Set-CodexTomlBlock {
+    param(
+        [string]$Path,
+        [string]$Block
+    )
+
+    if ((Test-Path $Path) -and (Select-String -Path $Path -SimpleMatch "[mcp_servers.local-figma-port]" -Quiet) -and -not (Select-String -Path $Path -SimpleMatch $CodexTomlMarkerStart -Quiet)) {
+        throw "Found an unmanaged [mcp_servers.local-figma-port] block in $Path. Refusing to overwrite it automatically."
+    }
+
+    $baseText = ""
+    if (Test-Path $Path) {
+        $baseText = Remove-ManagedBlockText -Text (Get-Content -Raw $Path) -StartMarker $CodexTomlMarkerStart -EndMarker $CodexTomlMarkerEnd
+        $lines = $baseText -split "`r?`n"
+        $filtered = New-Object System.Collections.Generic.List[string]
+        $skipLegacy = $false
+        foreach ($line in $lines) {
+            if ($skipLegacy -and $line -match '^\[') {
+                $skipLegacy = $false
+            }
+            if ($line -eq "[mcp_servers.design_local]") {
+                $skipLegacy = $true
+                continue
+            }
+            if (-not $skipLegacy) {
+                $filtered.Add($line)
+            }
+        }
+        $baseText = ($filtered -join "`n").TrimEnd()
+    }
+
+    $newText = if ([string]::IsNullOrWhiteSpace($baseText)) {
+        "$CodexTomlMarkerStart`n$Block`n$CodexTomlMarkerEnd`n"
+    } else {
+        "$baseText`n`n$CodexTomlMarkerStart`n$Block`n$CodexTomlMarkerEnd`n"
+    }
+
+    Write-WithBackup -Path $Path -Content $newText
+}
+
+function Set-JsonMcpFile {
+    param([string]$Path)
+
+    $server = @{
+        command = "node"
+        args = @((To-PosixPath $RepoMcpEntry))
+        env = @{
+            SQLITE_PATH = (To-PosixPath $RepoSqlite)
+            DATA_DIR = (To-PosixPath $RepoData)
+        }
+    }
+
+    $payload = @{}
+    if (Test-Path $Path) {
+        $raw = Get-Content -Raw $Path
+        if (-not [string]::IsNullOrWhiteSpace($raw)) {
+            $payload = $raw | ConvertFrom-Json -AsHashtable
+        }
+    }
+
+    if (-not $payload.ContainsKey("mcpServers") -or $payload.mcpServers -isnot [System.Collections.IDictionary]) {
+        $payload.mcpServers = @{}
+    }
+
+    $payload.mcpServers.Remove("design_local") | Out-Null
+    $payload.mcpServers["local-figma-port"] = $server
+    $json = ($payload | ConvertTo-Json -Depth 8)
+    Write-WithBackup -Path $Path -Content ($json + "`n")
+}
+
+function Ensure-McpRuntime {
+    Require-Command -Name "node"
+    Require-Command -Name "npm"
+
+    Write-Host "[install-windows] bootstrapping MCP runtime in $RepoMcpDir"
+    Push-Location $RepoMcpDir
+    try {
+        & npm install --no-package-lock
+        if ($LASTEXITCODE -ne 0) {
+            throw "npm install failed in $RepoMcpDir"
+        }
+        & npm run build | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "npm run build failed in $RepoMcpDir"
+        }
+    } finally {
+        Pop-Location
+    }
+
+    if (-not (Test-Path $RepoMcpEntry)) {
+        throw "MCP build did not produce $RepoMcpEntry"
+    }
+}
+
+function Ensure-ImporterRuntime {
+    $importerManifest = Join-Path $ProjectRoot "packages/design-importer/Cargo.toml"
+
+    Require-Command -Name "cargo"
+    Require-Command -Name "rustc"
+
+    if (-not (Test-Path $importerManifest)) {
+        throw "Missing importer manifest: $importerManifest"
+    }
+
+    Write-Host "[install-windows] bootstrapping importer runtime in $(Join-Path $ProjectRoot 'packages/design-importer')"
+    & cargo build --manifest-path $importerManifest --release | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo build failed for $importerManifest"
+    }
+}
+
+function Test-ProjectJsonConfigs {
+    if ($ClaudeCode) {
+        Test-JsonFileIfPresent -Path (Join-Path $ProjectRoot ".mcp.json") -Label "Claude project MCP config"
+    }
+    if ($Cursor) {
+        Test-JsonFileIfPresent -Path (Join-Path $ProjectRoot ".cursor/mcp.json") -Label "Cursor project MCP config"
+    }
+}
+
+function Ensure-CodexAppInstalled {
+    if (-not $CodexApp) {
+        return
+    }
+
+    if (-not (Test-Path $CodexAppData) -and -not (Test-Path $CodexAppExe)) {
+        throw "Codex App target selected, but no app data dir or executable was found. Checked: $CodexAppData and $CodexAppExe"
+    }
+}
+
+function Seed-StateDataIfNeeded {
+    New-Item -ItemType Directory -Force -Path $RepoData | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $StateDir "run") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $StateDir "logs") | Out-Null
+
+    if ($ProjectData -eq $RepoData -or -not (Test-Path $ProjectData)) {
+        return
+    }
+
+    $sourceSample = Get-ChildItem -Force $ProjectData -ErrorAction SilentlyContinue | Select-Object -First 1
+    $targetSample = Get-ChildItem -Force $RepoData -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $sourceSample -and $null -eq $targetSample) {
+        Copy-Item -Path (Join-Path $ProjectData "*") -Destination $RepoData -Recurse -Force
+        Write-Host "[install-windows] seeded stable state data from $ProjectData"
+    }
+}
+
+function Copy-SkillFile {
+    param([string]$TargetDir)
+
+    $target = Join-Path $TargetDir "SKILL.md"
+    $interfaceTarget = Join-Path $TargetDir "agents/openai.yaml"
+    $content = Get-Content -Raw $RepoSkill
+    Write-WithBackup -Path $target -Content $content
+
+    $interfaceContent = @"
+interface:
+  display_name: Local Figma Port
+  short_description: Exact UI replication from the Local Figma Port MCP server
+  default_prompt: Use the Local Figma Port MCP server as the source of truth and implement the target UI with exact traced fidelity.
+"@
+    Write-WithBackup -Path $interfaceTarget -Content $interfaceContent
+}
+
+function Render-AgentsBlock {
+    return @"
+## Local Figma Port
+
+### Available skills
+- Local Figma Port: Use when implementing UI from this repository's `local-figma-port` MCP server where nested descendants, partial node reads, or ambiguous style ownership could cause the agent to stop early and guess instead of fully tracing the design source. (file: $(To-PosixPath $RepoSkill))
+
+### How to use skills
+- If the user names this skill with ``$Local Figma Port`` or plain text `Local Figma Port`, you must use it for that turn.
+- Read the skill file above and follow it directly.
+- Treat `Local Figma Port` as the canonical human-facing alias for this repository skill.
+"@
+}
+
+function Render-ClaudeBlock {
+    return @"
+## Local Figma Port
+
+When the user mentions ``$Local Figma Port`` or `Local Figma Port`, use the skill at `$(To-PosixPath $RepoSkill)`.
+
+Use this skill for:
+- exact implementation from this repository's `local-figma-port` MCP server;
+- setup or troubleshooting of the Local Figma Port workflow itself.
+"@
+}
+
+function Render-CodexTomlBlock {
+    return @"
+[mcp_servers.local-figma-port]
+command = "node"
+args = ["$(To-PosixPath $RepoMcpEntry)"]
+env = { SQLITE_PATH = "$(To-PosixPath $RepoSqlite)", DATA_DIR = "$(To-PosixPath $RepoData)" }
+"@
+}
+
+function Show-InteractiveSelection {
+    while ($true) {
+        Write-Host ""
+        Write-Host "Select targets to configure:"
+        Write-Host "  [1] Codex"
+        Write-Host "  [2] Codex App"
+        Write-Host "  [3] Claude Code"
+        Write-Host "  [4] Cursor"
+        Write-Host ""
+        Write-Host "Enter numbers separated by commas, or use 'all'. Example: 1,2,4"
+        $choice = Read-Host "> "
+        if ([string]::IsNullOrWhiteSpace($choice)) {
+            $choice = "all"
+        }
+        try {
+            Apply-TargetsCsv -Csv $choice
+        } catch {
+            Write-Warning $_.Exception.Message
+            continue
+        }
+        if (-not ($Codex -or $CodexApp -or $ClaudeCode -or $Cursor)) {
+            Write-Warning "Select at least one target."
+            continue
+        }
+        return
+    }
+}
+
+if ($All) {
+    $Codex = $true
+    $CodexApp = $true
+    $ClaudeCode = $true
+    $Cursor = $true
+}
+
+if (-not [string]::IsNullOrWhiteSpace($Targets)) {
+    Apply-TargetsCsv -Csv $Targets
+}
+
+$explicitSelection = $Codex -or $CodexApp -or $ClaudeCode -or $Cursor
+if (-not $explicitSelection) {
+    Show-InteractiveSelection
+}
+
+if (-not (Test-Path $RepoSkill)) {
+    throw "Missing repo skill: $RepoSkill"
+}
+Test-SkillFrontmatter -Path $RepoSkill
+
+if (-not (Test-Path (Join-Path $RepoMcpDir "package.json"))) {
+    throw "Missing MCP package: $(Join-Path $RepoMcpDir 'package.json')"
+}
+
+Write-Host ""
+Write-Host "[install-windows] summary"
+if ($Codex) { Write-Host "  - Codex" }
+if ($CodexApp) { Write-Host "  - Codex App" }
+if ($ClaudeCode) { Write-Host "  - Claude Code" }
+if ($Cursor) { Write-Host "  - Cursor" }
+Write-Host "  - project root: $ProjectRoot"
+Write-Host "  - state root: $StateDir"
+if ($CodexApp) { Write-Host "  - codex app data: $CodexAppData" }
+
+Test-ProjectJsonConfigs
+Ensure-CodexAppInstalled
+Ensure-McpRuntime
+Ensure-ImporterRuntime
+Seed-StateDataIfNeeded
+
+if ($Codex -or $CodexApp) {
+    Copy-SkillFile -TargetDir (Join-Path $CodexHome "skills/local-figma-port")
+    Set-CodexTomlBlock -Path (Join-Path $CodexHome "config.toml") -Block (Render-CodexTomlBlock)
+}
+
+if ($ClaudeCode) {
+    Copy-SkillFile -TargetDir (Join-Path $ClaudeHome "skills/local-figma-port")
+    Set-JsonMcpFile -Path (Join-Path $ProjectRoot ".mcp.json")
+    Set-MarkdownManagedBlock -Path (Join-Path $ProjectRoot "CLAUDE.md") -StartMarker $ClaudeMarkerStart -EndMarker $ClaudeMarkerEnd -Block (Render-ClaudeBlock)
+}
+
+if ($Codex -or $CodexApp -or $Cursor) {
+    Set-MarkdownManagedBlock -Path (Join-Path $ProjectRoot "AGENTS.md") -StartMarker $AgentsMarkerStart -EndMarker $AgentsMarkerEnd -Block (Render-AgentsBlock)
+}
+
+if ($Cursor) {
+    Set-JsonMcpFile -Path (Join-Path $ProjectRoot ".cursor/mcp.json")
+}
+
+$verifyArgs = @(
+    "-ProjectRoot", $ProjectRoot,
+    "-StateDir", $StateDir,
+    "-CodexHome", $CodexHome,
+    "-ClaudeHome", $ClaudeHome,
+    "-CursorHome", $CursorHome
+)
+if ($Codex) { $verifyArgs += "-Codex" }
+if ($CodexApp) {
+    $verifyArgs += "-CodexApp"
+    $verifyArgs += "-CodexAppData"
+    $verifyArgs += $CodexAppData
+    $verifyArgs += "-CodexAppExe"
+    $verifyArgs += $CodexAppExe
+}
+if ($ClaudeCode) { $verifyArgs += "-ClaudeCode" }
+if ($Cursor) { $verifyArgs += "-Cursor" }
+
+& (Join-Path $ProjectRoot "scripts/verify-windows.ps1") @verifyArgs
+& (Join-Path $ProjectRoot "scripts/start_mcp.ps1") -ProjectRoot $ProjectRoot -StateDir $StateDir -DataDir $RepoData -SqlitePath $RepoSqlite -McpPort $(if ($env:MCP_PORT) { [int]$env:MCP_PORT } else { 7331 })
+if ($CodexApp) {
+    Write-Host "[install-windows] note: Codex App reads ~/.codex/config.toml; restart the app if it was already open."
+}
+Write-Host "[install-windows] install complete"

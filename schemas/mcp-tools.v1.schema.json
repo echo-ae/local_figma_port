@@ -1,0 +1,482 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MCP Tools Contracts v1",
+  "type": "object",
+  "required": ["version", "tools"],
+  "properties": {
+    "version": { "const": "mcp-tools.v1" },
+    "tools": {
+      "type": "object",
+      "required": [
+        "list_pages",
+        "list_frames",
+        "get_node",
+        "search_nodes",
+        "search_text",
+        "find_by_token",
+        "layout_report",
+        "get_context_bundle",
+        "resolve_instance",
+        "resolve_target",
+        "build_coverage_checklist"
+      ],
+      "properties": {
+        "list_pages": {
+          "type": "object",
+          "properties": {
+            "input": { "type": "object", "additionalProperties": false },
+            "output": {
+              "type": "object",
+              "required": ["pages"],
+              "properties": {
+                "pages": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "name", "frameCount"],
+                    "properties": {
+                      "id": { "type": "string" },
+                      "name": { "type": "string" },
+                      "frameCount": { "type": "integer" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "list_frames": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["pageId"],
+              "properties": {
+                "pageId": { "type": "string" },
+                "depth": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4,
+                  "default": 1
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 500,
+                  "default": 200
+                }
+              },
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "required": ["frames"],
+              "properties": {
+                "frames": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "name", "bounds", "childCount", "path"],
+                    "properties": {
+                      "id": { "type": "string" },
+                      "name": { "type": "string" },
+                      "bounds": { "type": "object" },
+                      "childCount": { "type": "integer" },
+                      "path": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "get_node": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["nodeId"],
+              "properties": {
+                "nodeId": { "type": "string" },
+                "includeChildren": { "type": "boolean", "default": false }
+              },
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "required": ["node"],
+              "properties": { "node": { "type": "object" } }
+            }
+          }
+        },
+        "search_nodes": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["query"],
+              "properties": {
+                "query": { "type": "string" },
+                "pageId": { "type": "string" },
+                "types": { "type": "array", "items": { "type": "string" } },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50,
+                  "default": 20
+                }
+              },
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "required": ["hits"],
+              "properties": {
+                "hits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["nodeId", "path", "snippet", "score"],
+                    "properties": {
+                      "nodeId": { "type": "string" },
+                      "path": { "type": "string" },
+                      "snippet": { "type": "string" },
+                      "score": { "type": "number" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "search_text": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["query"],
+              "properties": {
+                "query": { "type": "string" },
+                "pageId": { "type": "string" },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100,
+                  "default": 50
+                }
+              },
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "required": ["hits"],
+              "properties": { "hits": { "type": "array" } }
+            }
+          }
+        },
+        "find_by_token": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["tokenKey"],
+              "properties": {
+                "tokenKey": { "type": "string" },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 500,
+                  "default": 200
+                }
+              },
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "required": ["usages"],
+              "properties": { "usages": { "type": "array" } }
+            }
+          }
+        },
+        "layout_report": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["nodeId"],
+              "properties": {
+                "nodeId": { "type": "string" },
+                "mode": {
+                  "enum": ["intent", "computed", "intent+computed"],
+                  "default": "intent+computed"
+                }
+              },
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "required": ["summary"],
+              "properties": { "summary": { "type": "object" } }
+            }
+          }
+        },
+        "get_context_bundle": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["targetIds"],
+              "properties": {
+                "targetIds": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "minItems": 1
+                },
+                "maxBytes": {
+                  "type": "integer",
+                  "minimum": 20000,
+                  "maximum": 500000,
+                  "default": 200000
+                }
+              },
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "required": ["items"],
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["uri", "mime", "bytesBase64"],
+                    "properties": {
+                      "uri": { "type": "string" },
+                      "mime": { "type": "string" },
+                      "bytesBase64": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "resolve_instance": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["nodeId"],
+              "properties": {
+                "nodeId": { "type": "string" },
+                "depth": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4,
+                  "default": 1
+                },
+                "includeMaster": { "type": "boolean", "default": true },
+                "includeOverrides": { "type": "boolean", "default": true }
+              },
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "required": ["instance", "master", "overrides"],
+              "properties": {
+                "instance": { "type": "object" },
+                "master": { "type": ["object", "null"] },
+                "overrides": {
+                  "type": "array",
+                  "items": { "type": "object" }
+                }
+              }
+            }
+          }
+        },
+        "resolve_target": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["query"],
+              "properties": {
+                "query": { "type": "string" },
+                "scopeHint": {
+                  "enum": ["auto", "page", "selection", "node"],
+                  "default": "auto"
+                },
+                "pageId": { "type": "string" },
+                "types": { "type": "array", "items": { "type": "string" } },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50,
+                  "default": 10
+                }
+              },
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "required": ["query", "candidates", "ambiguous"],
+              "properties": {
+                "query": { "type": "string" },
+                "ambiguous": { "type": "boolean" },
+                "candidates": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "targetType",
+                      "targetId",
+                      "nodeId",
+                      "pageId",
+                      "name",
+                      "path",
+                      "bounds",
+                      "matchReason",
+                      "confidence"
+                    ],
+                    "properties": {
+                      "targetType": {
+                        "enum": ["page", "selection", "node"]
+                      },
+                      "targetId": { "type": "string" },
+                      "nodeId": { "type": ["string", "null"] },
+                      "pageId": { "type": ["string", "null"] },
+                      "name": { "type": "string" },
+                      "path": { "type": "string" },
+                      "bounds": { "type": ["object", "null"] },
+                      "previewUri": { "type": "string" },
+                      "previewFileUri": { "type": "string" },
+                      "matchReason": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "confidence": { "type": "number" }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "build_coverage_checklist": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["targetType", "targetId"],
+              "properties": {
+                "targetType": {
+                  "enum": ["page", "selection", "node"]
+                },
+                "targetId": { "type": "string" },
+                "nodeId": { "type": "string" },
+                "mode": {
+                  "enum": ["implementation"],
+                  "default": "implementation"
+                },
+                "maxItems": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 500,
+                  "default": 200
+                },
+                "requestedTarget": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            "output": {
+              "type": "object",
+              "required": [
+                "scopeType",
+                "scopeId",
+                "scopeBounds",
+                "previewUri",
+                "previewFileUri",
+                "outsideScopeWarning",
+                "majorSections",
+                "items"
+              ],
+              "properties": {
+                "scopeType": {
+                  "enum": ["page", "selection", "node"]
+                },
+                "scopeId": { "type": "string" },
+                "scopeBounds": { "type": ["object", "null"] },
+                "previewUri": { "type": ["string", "null"] },
+                "previewFileUri": { "type": ["string", "null"] },
+                "outsideScopeWarning": { "type": "string" },
+                "majorSections": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["name", "nodeId", "required"],
+                    "properties": {
+                      "name": { "type": "string" },
+                      "nodeId": { "type": "string" },
+                      "required": { "type": "boolean" }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "itemId",
+                      "role",
+                      "required",
+                      "nodeId",
+                      "path",
+                      "bounds",
+                      "requiredVisuals",
+                      "requiredText",
+                      "requiredAssets",
+                      "childrenToInspect",
+                      "status"
+                    ],
+                    "properties": {
+                      "itemId": { "type": "string" },
+                      "role": { "type": "string" },
+                      "required": { "type": "boolean" },
+                      "nodeId": { "type": "string" },
+                      "path": { "type": "string" },
+                      "bounds": { "type": "object" },
+                      "requiredVisuals": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "requiredText": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "requiredAssets": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "childrenToInspect": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "status": { "enum": ["open"] }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

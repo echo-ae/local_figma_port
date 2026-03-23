@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/plugin-export.v1.schema.json",
+  "title": "Figma Plugin Export v1",
+  "type": "object",
+  "required": ["version", "manifest", "chunks"],
+  "properties": {
+    "version": { "const": "plugin-export.v1" },
+    "manifest": {
+      "type": "object",
+      "required": ["exportId", "fileKey", "exportedAt", "pages"],
+      "properties": {
+        "exportId": { "type": "string" },
+        "fileKey": { "type": "string" },
+        "exportedAt": { "type": "string" },
+        "pages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "hash", "nodeChunk"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "hash": { "type": "string" },
+              "nodeChunk": {
+                "type": "string",
+                "description": "Relative path to nodes chunk .json.gz"
+              }
+            }
+          }
+        },
+        "tokensChunk": { "type": "string" },
+        "stylesChunk": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "chunks": {
+      "type": "object",
+      "properties": {
+        "nodes": { "type": "array", "items": { "type": "string" } },
+        "tokens": { "type": "string" },
+        "styles": { "type": "string" },
+        "previews": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,114 @@
+name: Bug report
+description: Report a reproducible problem with Local Figma Port
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        Please include enough detail for us to reproduce the issue and understand which part of Local Figma Port is affected.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      description: Please confirm the following before submitting.
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I tested this on the latest release or current `main` branch.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of the project is impacted?
+      options:
+        - Figma exporter plugin
+        - Design importer
+        - MCP server
+        - Skill / agent workflow
+        - Installation / setup
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release, commit SHA, or branch name.
+      placeholder: e.g. v0.3.0 or 1a2b3c4 on main
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A short description of the problem.
+      placeholder: Describe the bug and when it appears.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Share a minimal, reliable reproduction.
+      placeholder: |
+        1. Start the local server
+        2. Export a frame from the Figma plugin
+        3. Call the MCP tool `get_node`
+        4. Observe the error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: What did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: What happened instead? Include exact error messages if possible.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Share the relevant environment details.
+      placeholder: |
+        - OS:
+        - Node.js version:
+        - Package manager:
+        - Rust/Cargo version:
+        - Figma Desktop version:
+        - Editor / agent client:
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste logs, stack traces, screenshots, or exported snippets that help diagnose the issue.
+      render: shell
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Anything else that may help us investigate.

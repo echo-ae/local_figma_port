@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/design-ir.v1.schema.json",
+  "title": "Design IR v1",
+  "type": "object",
+  "required": ["version", "project", "pages", "nodes", "tokens"],
+  "properties": {
+    "version": { "const": "design-ir.v1" },
+    "project": {
+      "type": "object",
+      "required": ["fileKey", "exportId", "exportedAt"],
+      "properties": {
+        "fileKey": { "type": "string" },
+        "exportId": { "type": "string" },
+        "exportedAt": { "type": "string" }
+      }
+    },
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" }
+        }
+      }
+    },
+    "nodes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "name",
+          "bounds",
+          "childrenIds",
+          "styleRefs"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "name": { "type": "string" },
+          "pageId": { "type": "string" },
+          "parentId": { "type": "string" },
+          "childrenIds": { "type": "array", "items": { "type": "string" } },
+
+          "bounds": { "$ref": "#/$defs/rect" },
+          "absBounds": { "$ref": "#/$defs/rect" },
+
+          "componentId": { "type": "string" },
+          "variantProps": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+
+          "layoutIntent": { "$ref": "#/$defs/layoutIntent" },
+          "style": { "$ref": "#/$defs/stylePayload" },
+          "styleRefs": { "$ref": "#/$defs/styleRefs" },
+          "resources": { "$ref": "#/$defs/nodeResources" },
+          "inspectionHints": { "$ref": "#/$defs/inspectionHints" },
+
+          "computed": { "$ref": "#/$defs/computed" }
+        }
+      }
+    },
+    "tokens": { "type": "object" }
+  },
+  "$defs": {
+    "rect": {
+      "type": "object",
+      "required": ["x", "y", "w", "h"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "w": { "type": "number" },
+        "h": { "type": "number" }
+      }
+    },
+    "layoutIntent": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["NONE", "HORIZONTAL", "VERTICAL"] },
+        "wrap": { "enum": ["NO_WRAP", "WRAP"] },
+        "padding": {
+          "type": "object",
+          "properties": {
+            "t": { "type": "number" },
+            "r": { "type": "number" },
+            "b": { "type": "number" },
+            "l": { "type": "number" }
+          }
+        },
+        "gap": {
+          "type": "object",
+          "properties": {
+            "primary": { "oneOf": [{ "type": "number" }, { "const": "AUTO" }] },
+            "wrap": { "type": ["number", "null"] }
+          }
+        },
+        "align": {
+          "type": "object",
+          "properties": {
+            "primary": { "enum": ["MIN", "CENTER", "MAX", "SPACE_BETWEEN"] },
+            "counter": { "enum": ["MIN", "CENTER", "MAX", "STRETCH"] }
+          }
+        },
+        "sizing": {
+          "type": "object",
+          "properties": {
+            "primary": { "enum": ["FIXED", "HUG", "FILL"] },
+            "counter": { "enum": ["FIXED", "HUG", "FILL"] }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "styleRefs": {
+      "type": "object",
+      "required": ["variables", "styles"],
+      "properties": {
+        "variables": { "type": "array", "items": { "type": "string" } },
+        "styles": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "stylePayload": {
+      "type": "object",
+      "properties": {
+        "fills": { "type": "array" },
+        "strokes": { "type": "array" },
+        "effects": { "type": "array" },
+        "text": { "type": ["object", "null"] },
+        "box": {
+          "type": "object",
+          "properties": {
+            "cornerRadius": { "type": "number" },
+            "cornerRadii": {
+              "type": "object",
+              "properties": {
+                "tl": { "type": "number" },
+                "tr": { "type": "number" },
+                "br": { "type": "number" },
+                "bl": { "type": "number" }
+              },
+              "additionalProperties": false
+            },
+            "clipsContent": { "type": "boolean" },
+            "opacity": { "type": "number" },
+            "blendMode": { "type": "string" },
+            "strokeWeight": { "type": "number" },
+            "strokeAlign": { "type": "string" },
+            "dashPattern": {
+              "type": "array",
+              "items": { "type": "number" }
+            }
+          },
+          "additionalProperties": true
+        }
+      }
+    },
+    "nodeResources": {
+      "type": "object",
+      "properties": {
+        "previewUri": { "type": "string" },
+        "selectionIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "assetIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "imageIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "uikitComponentIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "inspectionHints": {
+      "type": "object",
+      "properties": {
+        "childrenExpandedDepth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hasDeeperDescendants": { "type": "boolean" },
+        "requiresInstanceResolution": { "type": "boolean" },
+        "masterComponentId": { "type": "string" },
+        "overrideNodeIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "relatedStateNodeIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "stateGroup": { "type": "string" },
+        "state": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "computed": {
+      "type": "object",
+      "properties": {
+        "contentBox": { "$ref": "#/$defs/rect" },
+        "edgeGaps": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["t", "r", "b", "l"],
+            "properties": {
+              "t": { "type": "number" },
+              "r": { "type": "number" },
+              "b": { "type": "number" },
+              "l": { "type": "number" }
+            }
+          }
+        },
+        "gapsBetween": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["a", "b", "axis", "value"],
+            "properties": {
+              "a": { "type": "string" },
+              "b": { "type": "string" },
+              "axis": { "enum": ["x", "y"] },
+              "value": { "type": "number" }
+            }
+          }
+        },
+        "confidence": {
+          "type": "object",
+          "properties": {
+            "spacingInference": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            }
+          }
+        }
+      }
+    }
+  }
+}

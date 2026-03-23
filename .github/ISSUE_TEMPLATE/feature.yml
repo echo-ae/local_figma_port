@@ -1,0 +1,79 @@
+name: Feature request
+description: Suggest a new capability or an improvement to Local Figma Port
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing an idea.
+
+        The most helpful requests explain the user problem, the desired outcome, and how the proposal fits into the Local Figma Port workflow.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      description: Please confirm the following before submitting.
+      options:
+        - label: I searched existing issues and did not find the same request.
+          required: true
+        - label: This request is focused on a specific problem or workflow improvement.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the project would this affect most?
+      options:
+        - Figma exporter plugin
+        - Design importer
+        - MCP server
+        - Skill / agent workflow
+        - Installation / setup
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What is hard, missing, or frustrating today?
+      placeholder: Describe the current limitation or workflow gap.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like to happen?
+      placeholder: Describe the feature, behavior, or UX you want to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: Who benefits from this and in what workflow?
+      placeholder: Explain the real-world scenario where this would help.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or alternative approaches did you try?
+      placeholder: Share existing workarounds, related tools, or rejected ideas.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Include mockups, examples, related issues, or links if relevant.

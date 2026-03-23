@@ -1,0 +1,8 @@
+{
+  "name": "Local Figma Port",
+  "id": "local-design-exporter",
+  "api": "1.0.0",
+  "main": "dist/main.js",
+  "capabilities": ["inspect"],
+  "editorType": ["figma", "dev"]
+}

@@ -1,0 +1,40 @@
+# macOS
+.DS_Store
+
+# Environment
+.env
+.env.*
+
+# Logs
+*.log
+
+# Ignore local working trees
+/.worktrees/
+/AGENTS.md
+/CLAUDE.md
+/.mcp.json
+/.cursor/mcp.json
+
+# Private/local verification helpers
+/scripts/*smoke*.sh
+/scripts/fixtures/
+
+# Inputs and generated local data
+/imports/**
+/import-ui-kit/**
+/data/
+/.pnpm-store/
+
+# Build / dependencies
+**/node_modules/
+**/dist/
+**/target/
+
+# Local package-manager lockfiles
+**/package-lock.json
+**/pnpm-lock.yaml
+**/yarn.lock
+
+# Keep directory placeholders if needed
+!/imports/.gitkeep
+!/import-ui-kit/.gitkeep

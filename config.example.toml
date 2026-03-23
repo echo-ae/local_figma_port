@@ -1,0 +1,14 @@
+# Example Codex MCP configuration for this project.
+# Requires Node.js LTS in PATH.
+
+model = "gpt-5.3-codex"
+model_reasoning_effort = "medium"
+
+[mcp_servers.local-figma-port]
+command = "node"
+args = ["<repo-root>/packages/mcp-server/dist/mcp-stdio.js"]
+env = { SQLITE_PATH = "<state-root>/data/design_store.sqlite", DATA_DIR = "<state-root>/data", LOCAL_FIGMA_PORT_CHAT_PREVIEW_MODE = "raw" }
+
+# Optional: remote Figma MCP
+[mcp_servers.figma]
+url = "https://mcp.figma.com/mcp"

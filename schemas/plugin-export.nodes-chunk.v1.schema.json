@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/plugin-export.nodes-chunk.v1.schema.json",
+  "title": "Figma Plugin Export Nodes Chunk v1",
+  "type": "object",
+  "required": ["pageId", "pageName", "nodes"],
+  "properties": {
+    "pageId": { "type": "string" },
+    "pageName": { "type": "string" },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/node" }
+    }
+  },
+  "$defs": {
+    "rect": {
+      "type": "object",
+      "required": ["x", "y", "w", "h"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "w": { "type": "number" },
+        "h": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "nodeResources": {
+      "type": "object",
+      "properties": {
+        "previewUri": { "type": "string" },
+        "selectionIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "assetIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "imageIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "inspectionHints": {
+      "type": "object",
+      "properties": {
+        "requiresInstanceResolution": { "type": "boolean" },
+        "masterComponentId": { "type": "string" },
+        "overrideNodeIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "relatedStateNodeIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "stateGroup": { "type": "string" },
+        "state": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "type", "name", "bounds", "childrenIds", "refs"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "name": { "type": "string" },
+        "pageId": { "type": "string" },
+        "parentId": { "type": "string" },
+        "childrenIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "bounds": { "$ref": "#/$defs/rect" },
+        "absBounds": { "$ref": "#/$defs/rect" },
+        "componentId": { "type": "string" },
+        "variantProps": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "layout": {
+          "type": "object"
+        },
+        "style": {
+          "type": "object",
+          "properties": {
+            "fills": { "type": "array" },
+            "strokes": { "type": "array" },
+            "effects": { "type": "array" },
+            "text": { "type": ["object", "null"] },
+            "box": {
+              "type": "object",
+              "properties": {
+                "cornerRadius": { "type": "number" },
+                "cornerRadii": {
+                  "type": "object",
+                  "properties": {
+                    "tl": { "type": "number" },
+                    "tr": { "type": "number" },
+                    "br": { "type": "number" },
+                    "bl": { "type": "number" }
+                  },
+                  "additionalProperties": false
+                },
+                "clipsContent": { "type": "boolean" },
+                "opacity": { "type": "number" },
+                "blendMode": { "type": "string" },
+                "strokeWeight": { "type": "number" },
+                "strokeAlign": { "type": "string" },
+                "dashPattern": {
+                  "type": "array",
+                  "items": { "type": "number" }
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "refs": {
+          "type": "object",
+          "required": ["variables", "styles"],
+          "properties": {
+            "variables": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "styles": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": { "$ref": "#/$defs/nodeResources" },
+        "inspectionHints": { "$ref": "#/$defs/inspectionHints" },
+        "characters": { "type": "string" },
+        "text": { "type": "object" },
+        "computed": { "type": "object" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

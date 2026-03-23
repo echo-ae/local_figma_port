@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <title>Design Exporter</title>
+        <style>
+            body {
+                font-family: sans-serif;
+                margin: 12px;
+            }
+            button {
+                margin-right: 8px;
+            }
+            pre {
+                white-space: pre-wrap;
+                max-height: 280px;
+                overflow: auto;
+                font-size: 12px;
+                background: #f4f4f4;
+                padding: 8px;
+            }
+        </style>
+    </head>
+    <body>
+        <h3>Export plugin-export.v1</h3>
+        <p>
+            Click export and save all files into the
+            <code>/imports</code> folder.
+        </p>
+        <button id="run">Export</button>
+        <button id="close">Close</button>
+        <pre id="log"></pre>
+
+        <script>
+            const log = document.getElementById("log");
+            function append(msg) {
+                log.textContent += msg + "\n";
+            }
+
+            function b64ToBytes(base64) {
+                const s = atob(base64);
+                const out = new Uint8Array(s.length);
+                for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+                return out;
+            }
+
+            function download(path, base64, mime) {
+                const bytes = b64ToBytes(base64);
+                const blob = new Blob([bytes], {
+                    type: mime || "application/octet-stream",
+                });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = path;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            }
+
+            document.getElementById("run").onclick = () => {
+                parent.postMessage({ pluginMessage: { type: "export" } }, "*");
+            };
+
+            document.getElementById("close").onclick = () => {
+                parent.postMessage({ pluginMessage: { type: "close" } }, "*");
+            };
+
+            onmessage = (event) => {
+                const msg = event.data.pluginMessage;
+                if (!msg) return;
+                if (msg.type === "export-error") {
+                    append("Error: " + msg.error);
+                    return;
+                }
+                if (msg.type === "export-ready") {
+                    append(
+                        "Export ID: " + msg.payload.manifest.manifest.exportId,
+                    );
+                    const files = msg.payload.files || [];
+                    files.forEach((f) => {
+                        download(f.path, f.bytesBase64, f.mime);
+                        append("Downloaded: " + f.path);
+                    });
+                    append("Done");
+                }
+            };
+        </script>
+    </body>
+</html>
