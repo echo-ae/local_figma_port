@@ -140,6 +140,7 @@ Instead of asking an agent to reason over an entire design system, you give it e
 - Node.js LTS
 - Rust toolchain and Cargo
 - Figma Desktop
+- On Windows: Visual Studio Build Tools (or Visual Studio) with C++ build tools
 
 ### Quick Start By Platform
 
@@ -185,6 +186,9 @@ Install for one or more targets:
 ```powershell
 pwsh -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
 ```
+
+The Windows installer builds the Rust importer locally. If `link.exe` is missing,
+install Visual Studio Build Tools with the C++ workload and re-run the installer.
 
 Default state root on Windows:
 

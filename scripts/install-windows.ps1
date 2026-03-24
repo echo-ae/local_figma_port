@@ -136,6 +136,26 @@ function Require-Command {
     }
 }
 
+function Ensure-MsvcLinkerAvailable {
+    $linker = Get-Command "link.exe" -ErrorAction SilentlyContinue
+    if ($linker) {
+        return
+    }
+
+    throw @"
+Rust is installed, but the MSVC linker (link.exe) is not available.
+
+Local Figma Port builds the Rust importer on Windows, which requires the
+Visual C++ toolchain.
+
+Install one of these:
+- Visual Studio 2017 or later with Desktop development with C++
+- Build Tools for Visual Studio with the C++ build tools workload
+
+Then re-run this installer from a new PowerShell session.
+"@
+}
+
 function Test-SkillFrontmatter {
     param([string]$Path)
 
@@ -313,6 +333,7 @@ function Ensure-ImporterRuntime {
 
     Require-Command -Name "cargo"
     Require-Command -Name "rustc"
+    Ensure-MsvcLinkerAvailable
 
     if (-not (Test-Path $importerManifest)) {
         throw "Missing importer manifest: $importerManifest"
