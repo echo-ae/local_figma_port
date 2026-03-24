@@ -33,7 +33,7 @@ To use the Local Figma Port plugin in Figma:
 3. Select `packages/figma-exporter-plugin/manifest.json`
 4. Run `Plugins → Development → Local Figma Port`
 
-You can now select a node and export it using the plugin.
+You can now select a node and export it from Figma using the plugin.
 
 Requires Figma Desktop (plugin development mode is not available in the browser).
 
@@ -47,7 +47,7 @@ Use the Local Figma Port skill in your agent:
 
 The shortcut tells the agent to use the exported Local Figma Port context instead of guessing from scratch.
 
-The more specific your prompt, the better the result.
+The more specific your prompt, the better the result will be.
 
 You can combine it with any prompt:
 - `$Local Figma Port build this component`
@@ -56,6 +56,19 @@ You can combine it with any prompt:
 
 You can check what is in MCP now:
 - `$Local Figma Port what do you see?`
+
+## Model Recommendations
+
+For best results, use strong coding agents backed by large models.
+
+Recommended environments:
+- Codex / Codex App
+- Claude Code
+- Cursor
+
+These tools provide sufficient reasoning and context handling to work effectively with Local Figma Port.
+
+Using weaker coding agents or smaller models is not recommended, as they may struggle to interpret the exported design context and produce lower-quality results.
 
 ## Figma Access Note
 
@@ -270,7 +283,7 @@ After export, the MCP server should expose only the scope you exported, not the 
 
 If you want a different node to appear in MCP, select that node in Figma and export again.
 
-## Figma Plugin Setup For Development
+## Developing the Figma Plugin
 
 1. Open Figma Desktop.
 2. Go to `Plugins -> Development -> Import plugin from manifest...`
