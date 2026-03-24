@@ -137,7 +137,7 @@ function Test-JsonFileIfPresent {
     try {
         $null = $raw | ConvertFrom-Json -AsHashtable
     } catch {
-        throw "Invalid JSON in $Label: $Path`n$($_.Exception.Message)"
+        throw "Invalid JSON in ${Label}: ${Path}`n$($_.Exception.Message)"
     }
 }
 
