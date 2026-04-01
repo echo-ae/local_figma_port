@@ -405,9 +405,13 @@ function Ensure-McpRuntime {
     Write-Host "[install-windows] bootstrapping MCP runtime in $RepoMcpDir"
     Push-Location $RepoMcpDir
     try {
-        & npm install --no-package-lock
-        if ($LASTEXITCODE -ne 0) {
-            throw "npm install failed in $RepoMcpDir"
+        if (Test-Path (Join-Path $RepoMcpDir "node_modules")) {
+            Write-Host "[install-windows] reusing existing node_modules in $RepoMcpDir"
+        } else {
+            & npm install --no-package-lock
+            if ($LASTEXITCODE -ne 0) {
+                throw "npm install failed in $RepoMcpDir"
+            }
         }
         & npm run build | Out-Null
         if ($LASTEXITCODE -ne 0) {

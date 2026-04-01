@@ -337,7 +337,11 @@ ensure_mcp_runtime() {
   echo "[install-mac] bootstrapping MCP runtime in $REPO_MCP_DIR"
   (
     cd "$REPO_MCP_DIR"
-    npm install --no-package-lock >/dev/null
+    if [[ -d node_modules ]]; then
+      echo "[install-mac] reusing existing node_modules in $REPO_MCP_DIR"
+    else
+      npm install --no-package-lock >/dev/null
+    fi
     npm run build >/dev/null
   )
 
