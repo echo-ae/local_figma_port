@@ -15,6 +15,7 @@ import { getContextBundle } from "./tools/get_context_bundle.js";
 import { resolveInstance } from "./tools/resolve_instance.js";
 import { getResource } from "./resources/handlers.js";
 import { validateToolInput, validateToolOutput } from "./schema/validate.js";
+import { query } from "./db.js";
 
 const PORT = Number(process.env.MCP_PORT ?? 7331);
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -51,6 +52,13 @@ const handlers: Record<ToolName, (input: any) => any> = {
   get_context_bundle: (input) => getContextBundle(input),
   resolve_instance: (input) => resolveInstance(input),
 };
+
+function assertFtsReady(): void {
+  query("SELECT COUNT(*) AS count FROM fts_nodes");
+  query("SELECT COUNT(*) AS count FROM fts_texts");
+}
+
+assertFtsReady();
 
 function json(res: http.ServerResponse, status: number, body: unknown) {
   const payload = JSON.stringify(body);

@@ -69,6 +69,13 @@ const toolDescriptions: Record<string, string> = {
     "Build a target-scoped coverage checklist for a chosen page, selection, or node. Warns when requested UI appears broader than the exported scope.",
 };
 
+function assertFtsReady(): void {
+  query("SELECT COUNT(*) AS count FROM fts_nodes");
+  query("SELECT COUNT(*) AS count FROM fts_texts");
+}
+
+assertFtsReady();
+
 let outputMode: "content-length" | "line" = "content-length";
 
 function writeMessage(msg: unknown) {

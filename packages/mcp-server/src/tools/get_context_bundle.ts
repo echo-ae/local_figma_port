@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { one, query } from "../db.js";
+import { one } from "../db.js";
 import { buildTextRenderHints } from "./text_render_hints.js";
 
 const DATA_DIR = process.env.DATA_DIR ?? "/data";
