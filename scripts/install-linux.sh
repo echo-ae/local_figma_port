@@ -156,6 +156,15 @@ require_cmd() {
   fi
 }
 
+ensure_sqlite_fts5() {
+  require_cmd sqlite3
+  if ! sqlite3 :memory: "CREATE VIRTUAL TABLE temp.t USING fts5(x); DROP TABLE temp.t;" >/dev/null 2>&1; then
+    echo "[install-linux] sqlite3 is present, but this build does not support FTS5." >&2
+    echo "[install-linux] install a sqlite3 build with FTS5 enabled and re-run the installer." >&2
+    exit 1
+  fi
+}
+
 validate_skill_frontmatter() {
   local file="$1"
   if [[ ! -f "$file" ]]; then
@@ -503,6 +512,7 @@ print_summary() {
 print_summary
 
 preflight_project_json_configs
+ensure_sqlite_fts5
 ensure_mcp_runtime
 ensure_importer_runtime
 seed_state_data_if_needed

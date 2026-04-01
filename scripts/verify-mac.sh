@@ -155,6 +155,19 @@ fail() {
   failures=$((failures + 1))
 }
 
+check_sqlite_fts5() {
+  local label="$1"
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    fail "$label (missing command: sqlite3)"
+    return
+  fi
+  if sqlite3 :memory: "CREATE VIRTUAL TABLE temp.t USING fts5(x); DROP TABLE temp.t;" >/dev/null 2>&1; then
+    ok "$label"
+  else
+    fail "$label"
+  fi
+}
+
 check_contains() {
   local file="$1"
   local needle="$2"
@@ -324,6 +337,7 @@ fi
 if [[ ! -d "$REPO_MCP_DIR/node_modules" ]]; then
   fail "MCP runtime dependencies exist ($REPO_MCP_DIR/node_modules)"
 fi
+check_sqlite_fts5 "system sqlite3 supports FTS5"
 
 if [[ "$SELECT_CODEX" -eq 1 ]]; then
   verify_codex_shared_config "Codex"

@@ -4,8 +4,12 @@ param(
     [string]$StateDir = $(if ($env:LOCAL_FIGMA_PORT_STATE_DIR) { $env:LOCAL_FIGMA_PORT_STATE_DIR } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "LocalFigmaPort" } else { Join-Path $env:USERPROFILE "AppData/Local/LocalFigmaPort" }),
     [string]$DataDir = "",
     [string]$SqlitePath = "",
+    [string]$Sqlite3Bin = "",
     [int]$McpPort = $(if ($env:MCP_PORT) { [int]$env:MCP_PORT } else { 7331 })
 )
+
+. (Join-Path $PSScriptRoot "lib/ensure-pwsh7.ps1")
+Restart-InPwsh7IfNeeded -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters -ForwardArgs $MyInvocation.UnboundArguments
 
 $ErrorActionPreference = "Stop"
 
@@ -16,6 +20,14 @@ if ([string]::IsNullOrWhiteSpace($DataDir)) {
 }
 if ([string]::IsNullOrWhiteSpace($SqlitePath)) {
     $SqlitePath = Join-Path $DataDir "design_store.sqlite"
+}
+if ([string]::IsNullOrWhiteSpace($Sqlite3Bin)) {
+    $bundledSqlite = Join-Path $StateDir "bin/sqlite3.exe"
+    if (Test-Path $bundledSqlite -PathType Leaf) {
+        $Sqlite3Bin = $bundledSqlite
+    } else {
+        $Sqlite3Bin = "sqlite3"
+    }
 }
 
 $McpDir = Join-Path $ProjectRoot "packages/mcp-server"
@@ -57,11 +69,13 @@ try {
 }
 
 $previousProjectRoot = $env:PROJECT_ROOT
+$previousSqlite3Bin = $env:SQLITE3_BIN
 $previousSqlitePath = $env:SQLITE_PATH
 $previousDataDir = $env:DATA_DIR
 $previousMcpPort = $env:MCP_PORT
 try {
     $env:PROJECT_ROOT = $ProjectRoot
+    $env:SQLITE3_BIN = $Sqlite3Bin
     $env:SQLITE_PATH = $SqlitePath
     $env:DATA_DIR = $DataDir
     $env:MCP_PORT = [string]$McpPort
@@ -70,6 +84,7 @@ try {
     $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $cmd -WorkingDirectory $McpDir -WindowStyle Hidden -PassThru
 } finally {
     $env:PROJECT_ROOT = $previousProjectRoot
+    $env:SQLITE3_BIN = $previousSqlite3Bin
     $env:SQLITE_PATH = $previousSqlitePath
     $env:DATA_DIR = $previousDataDir
     $env:MCP_PORT = $previousMcpPort
@@ -89,4 +104,5 @@ try {
     throw $message
 }
 Write-Host "[start] MCP started pid=$($proc.Id) port=$McpPort"
+Write-Host "[start] sqlite3: $Sqlite3Bin"
 Write-Host "[start] log: $LogFile"

@@ -15,6 +15,9 @@ param(
     [string]$CursorHome = (Join-Path $env:USERPROFILE ".cursor")
 )
 
+. (Join-Path $PSScriptRoot "lib/ensure-pwsh7.ps1")
+Restart-InPwsh7IfNeeded -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters -ForwardArgs $MyInvocation.UnboundArguments
+
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = (Resolve-Path $ProjectRoot).Path
@@ -22,6 +25,20 @@ $StateDir = [System.IO.Path]::GetFullPath($StateDir)
 $RepoSkill = Join-Path $ProjectRoot "SKILL.md"
 $RepoMcpDir = Join-Path $ProjectRoot "packages/mcp-server"
 $RepoMcpEntry = Join-Path $ProjectRoot "packages/mcp-server/dist/mcp-stdio.js"
+$RepoSqliteBinDir = Join-Path $StateDir "bin"
+$RepoSqliteBin = Join-Path $RepoSqliteBinDir "sqlite3.exe"
+$RepoSqliteArchiveDir = Join-Path $StateDir "downloads"
+$RepoSqliteAssetName = "sqlite-tools-win-x64-3510300.zip"
+$RepoSqliteArchive = Join-Path $RepoSqliteArchiveDir $RepoSqliteAssetName
+$RepoSqliteVersion = "3.51.3"
+$RepoSqliteGitHubRepo = "echo-ae/local_figma_port"
+$RepoSqliteReleaseTag = $env:LOCAL_FIGMA_PORT_RELEASE_TAG
+$RepoSqliteReleaseAssetUrl = $(if ([string]::IsNullOrWhiteSpace($RepoSqliteReleaseTag)) {
+    "https://github.com/$RepoSqliteGitHubRepo/releases/latest/download/$RepoSqliteAssetName"
+} else {
+    "https://github.com/$RepoSqliteGitHubRepo/releases/download/$RepoSqliteReleaseTag/$RepoSqliteAssetName"
+})
+$RepoSqliteUpstreamUrl = "https://sqlite.org/2026/$RepoSqliteAssetName"
 $ProjectData = Join-Path $ProjectRoot "data"
 $RepoData = Join-Path $StateDir "data"
 $RepoSqlite = Join-Path $RepoData "design_store.sqlite"
@@ -156,6 +173,82 @@ Then re-run this installer from a new PowerShell session.
 "@
 }
 
+function Invoke-DownloadFile {
+    param(
+        [string[]]$Urls,
+        [string]$Destination,
+        [string]$Label
+    )
+
+    $attemptErrors = New-Object System.Collections.Generic.List[string]
+    foreach ($url in $Urls) {
+        try {
+            if (Test-Path $Destination) {
+                Remove-Item $Destination -Force -ErrorAction SilentlyContinue
+            }
+            Write-Host "[install-windows] downloading $Label from $url"
+            Invoke-WebRequest -Uri $url -OutFile $Destination
+            if (-not (Test-Path $Destination -PathType Leaf)) {
+                throw "download completed but file is missing"
+            }
+            return
+        } catch {
+            $attemptErrors.Add("${url}: $($_.Exception.Message)")
+        }
+    }
+
+    throw "Failed to download ${Label}. Attempts:`n$($attemptErrors -join "`n")"
+}
+
+function Test-SqliteFts5 {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path -PathType Leaf)) {
+        return $false
+    }
+
+    & $Path ":memory:" "CREATE VIRTUAL TABLE temp.t USING fts5(x); DROP TABLE temp.t;" | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Ensure-SqliteRuntime {
+    New-Item -ItemType Directory -Force -Path $RepoSqliteBinDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $RepoSqliteArchiveDir | Out-Null
+
+    if (Test-SqliteFts5 -Path $RepoSqliteBin) {
+        Write-Host "[install-windows] using existing sqlite3.exe with FTS5: $RepoSqliteBin"
+        return
+    }
+
+    $extractDir = Join-Path $RepoSqliteArchiveDir ([System.IO.Path]::GetFileNameWithoutExtension($RepoSqliteAssetName))
+    if (Test-Path $extractDir) {
+        Remove-Item $extractDir -Recurse -Force
+    }
+
+    $overrideUrl = $env:LOCAL_FIGMA_PORT_SQLITE_ZIP_URL
+    $candidateUrls = if ([string]::IsNullOrWhiteSpace($overrideUrl)) {
+        @($RepoSqliteReleaseAssetUrl, $RepoSqliteUpstreamUrl)
+    } else {
+        @($overrideUrl)
+    }
+
+    Invoke-DownloadFile -Urls $candidateUrls -Destination $RepoSqliteArchive -Label "SQLite $RepoSqliteVersion Windows x64 tools archive"
+    Expand-Archive -LiteralPath $RepoSqliteArchive -DestinationPath $extractDir -Force
+
+    $downloadedSqlite = Join-Path $extractDir "sqlite3.exe"
+    if (-not (Test-Path $downloadedSqlite -PathType Leaf)) {
+        throw "Downloaded SQLite archive did not contain sqlite3.exe: $RepoSqliteArchive"
+    }
+
+    Copy-Item -LiteralPath $downloadedSqlite -Destination $RepoSqliteBin -Force
+
+    if (-not (Test-SqliteFts5 -Path $RepoSqliteBin)) {
+        throw "Downloaded sqlite3.exe does not support FTS5: $RepoSqliteBin"
+    }
+
+    Write-Host "[install-windows] prepared sqlite3.exe with FTS5: $RepoSqliteBin"
+}
+
 function Test-SkillFrontmatter {
     param([string]$Path)
 
@@ -281,6 +374,7 @@ function Set-JsonMcpFile {
         command = "node"
         args = @((To-PosixPath $RepoMcpEntry))
         env = @{
+            SQLITE3_BIN = (To-PosixPath $RepoSqliteBin)
             SQLITE_PATH = (To-PosixPath $RepoSqlite)
             DATA_DIR = (To-PosixPath $RepoData)
         }
@@ -430,7 +524,7 @@ function Render-CodexTomlBlock {
 [mcp_servers.local-figma-port]
 command = "node"
 args = ["$(To-PosixPath $RepoMcpEntry)"]
-env = { SQLITE_PATH = "$(To-PosixPath $RepoSqlite)", DATA_DIR = "$(To-PosixPath $RepoData)" }
+env = { SQLITE3_BIN = "$(To-PosixPath $RepoSqliteBin)", SQLITE_PATH = "$(To-PosixPath $RepoSqlite)", DATA_DIR = "$(To-PosixPath $RepoData)" }
 "@
 }
 
@@ -495,10 +589,13 @@ if ($ClaudeCode) { Write-Host "  - Claude Code" }
 if ($Cursor) { Write-Host "  - Cursor" }
 Write-Host "  - project root: $ProjectRoot"
 Write-Host "  - state root: $StateDir"
+Write-Host "  - sqlite version: $RepoSqliteVersion"
+Write-Host "  - sqlite target: $RepoSqliteBin"
 if ($CodexApp) { Write-Host "  - codex app data: $CodexAppData" }
 
 Test-ProjectJsonConfigs
 Ensure-CodexAppInstalled
+Ensure-SqliteRuntime
 Ensure-McpRuntime
 Ensure-ImporterRuntime
 Seed-StateDataIfNeeded

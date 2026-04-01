@@ -4,6 +4,9 @@ param(
     [int]$McpPort = $(if ($env:MCP_PORT) { [int]$env:MCP_PORT } else { 7331 })
 )
 
+. (Join-Path $PSScriptRoot "lib/ensure-pwsh7.ps1")
+Restart-InPwsh7IfNeeded -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters -ForwardArgs $MyInvocation.UnboundArguments
+
 $ErrorActionPreference = "Stop"
 
 $StateDir = [System.IO.Path]::GetFullPath($StateDir)

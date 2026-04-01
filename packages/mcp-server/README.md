@@ -12,7 +12,7 @@ TypeScript MCP server module for querying imported design data from SQLite and `
 - Validate tool input/output against `schemas/mcp-tools.v1.schema.json`
 - Serve base design resources:
   - `design://manifest`
-  - `design://page/{pageId}`
+  - `design://page/{pageId}` (page-scoped chunk; tokens stay separate in `design://tokens`)
   - `design://node/{nodeId}`
   - `design://tokens`
   - `design://styles`
@@ -41,7 +41,7 @@ TypeScript MCP server module for querying imported design data from SQLite and `
 
 ## Module Structure
 
-- `src/db.ts` - SQLite query helpers (via `sqlite3` CLI)
+- `src/db.ts` - SQLite query helpers (via `sqlite3` CLI, overridable with `SQLITE3_BIN`)
 - `src/resources/handlers.ts` - resource URI resolution
 - `src/tools/*` - tool implementations
 - `src/tools/node_payload.ts` - shared node hydration with traversal hints/resources
@@ -62,6 +62,7 @@ npm run build
 ```bash
 cd <repo-root>/packages/mcp-server
 SQLITE_PATH=/path/to/local-figma-port-state/data/design_store.sqlite \
+SQLITE3_BIN=/path/to/sqlite3 \
 DATA_DIR=/path/to/local-figma-port-state/data \
 MCP_PORT=7331 \
 node dist/index.js
@@ -86,6 +87,7 @@ HTTP checks:
 ```bash
 cd <repo-root>/packages/mcp-server
 SQLITE_PATH=/path/to/local-figma-port-state/data/design_store.sqlite \
+SQLITE3_BIN=/path/to/sqlite3 \
 DATA_DIR=/path/to/local-figma-port-state/data \
 node dist/mcp-stdio.js
 ```

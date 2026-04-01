@@ -153,7 +153,9 @@ Instead of asking an agent to reason over an entire design system, you give it e
 - Node.js LTS
 - Rust toolchain and Cargo
 - Figma Desktop
+- On macOS and Linux: `sqlite3` must be installed with `FTS5` enabled
 - On Windows: Visual Studio Build Tools (or Visual Studio) with C++ build tools
+- On Windows: no separate SQLite install is required; the installer downloads a known SQLite CLI build with FTS5
 
 ### Quick Start By Platform
 
@@ -182,6 +184,7 @@ The installer:
 
 - installs local runtime dependencies
 - validates and builds the importer/server toolchain
+- validates that the system `sqlite3` CLI supports `FTS5`
 - installs or syncs the Local Figma Port skill where needed
 - updates local MCP configuration
 - uses a stable per-user state directory instead of repository-local runtime state
@@ -200,8 +203,32 @@ Install for one or more targets:
 pwsh -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
 ```
 
+If a user launches the script from Windows PowerShell 5, the script now tries to
+re-start itself under PowerShell 7 automatically and shows a clear message if
+`pwsh` is not installed.
+
 The Windows installer builds the Rust importer locally. If `link.exe` is missing,
 install Visual Studio Build Tools with the C++ workload and re-run the installer.
+
+It also prepares `sqlite3.exe` in the Local Figma Port state directory and points
+the MCP server at that exact binary, so Windows users do not need a separate
+SQLite install on `PATH`.
+
+The installer first tries the matching GitHub Release asset for this project and
+falls back to the official SQLite upstream tools archive if that asset is not
+yet present. The downloaded binary is then checked for `FTS5` support before it
+is used.
+
+By default, the installer looks for that asset on the project's `latest`
+GitHub release. You can override that with `LOCAL_FIGMA_PORT_RELEASE_TAG` or
+provide a direct archive URL with `LOCAL_FIGMA_PORT_SQLITE_ZIP_URL`.
+
+The current pinned Windows bundle is SQLite `3.51.3` (`sqlite-tools-win-x64-3510300.zip`).
+The official SQLite download page currently ships Windows command-line tools for
+x64. On Windows ARM64, that binary runs through x64 emulation.
+
+Release maintainers can use the short runbook in
+[WINDOWS_SQLITE_RELEASE_ASSET.md](/Users/alex/Documents/src/figma_port/docs/WINDOWS_SQLITE_RELEASE_ASSET.md).
 
 Default state root on Windows:
 
@@ -222,6 +249,9 @@ Supported target numbers:
 - `1` = Codex
 - `2` = Claude Code
 - `3` = Cursor
+
+The Linux installer validates that the system `sqlite3` CLI supports `FTS5`
+before it finishes.
 
 Default state root on Linux:
 

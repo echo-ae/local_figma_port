@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 
 const SQLITE_PATH = process.env.SQLITE_PATH ?? "/data/design_store.sqlite";
+const SQLITE3_BIN = process.env.SQLITE3_BIN ?? "sqlite3";
 
 function sqlLiteral(value: unknown): string {
   if (value === null || value === undefined) {
@@ -23,8 +24,9 @@ function bind(sql: string, params: unknown[] = []): string {
 
 export function query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): T[] {
   const rendered = bind(sql, params);
-  const out = execFileSync("sqlite3", ["-json", SQLITE_PATH, rendered], {
+  const out = execFileSync(SQLITE3_BIN, ["-json", SQLITE_PATH, rendered], {
     encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
   }).trim();
   if (!out) return [];
   return JSON.parse(out) as T[];
@@ -37,7 +39,10 @@ export function one<T = Record<string, unknown>>(sql: string, params: unknown[] 
 
 export function execute(sql: string, params: unknown[] = []): void {
   const rendered = bind(sql, params);
-  execFileSync("sqlite3", [SQLITE_PATH, rendered], { encoding: "utf8" });
+  execFileSync(SQLITE3_BIN, [SQLITE_PATH, rendered], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 }
 
-export { SQLITE_PATH };
+export { SQLITE_PATH, SQLITE3_BIN };

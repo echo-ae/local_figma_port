@@ -17,6 +17,9 @@ param(
     [string]$CursorHome = (Join-Path $env:USERPROFILE ".cursor")
 )
 
+. (Join-Path $PSScriptRoot "lib/ensure-pwsh7.ps1")
+Restart-InPwsh7IfNeeded -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters -ForwardArgs $MyInvocation.UnboundArguments
+
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = (Resolve-Path $ProjectRoot).Path
