@@ -63,6 +63,7 @@ export type ExportedNode = {
   refs: {
     variables: string[];
     styles: string[];
+    variableProps?: Record<string, string[]>;
   };
   resources?: ExportedNodeResources;
   inspectionHints?: ExportedInspectionHints;

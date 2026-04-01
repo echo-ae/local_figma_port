@@ -16,6 +16,7 @@ Recommended workflow for coding agents:
   - project summary manifest
 - `design://page/{pageId}`
   - normalized page chunk (gzip JSON)
+  - page-scoped nodes and metadata only; tokens are intentionally not embedded
 - `design://node/{nodeId}`
   - single normalized node JSON, including merged `resources` and `inspectionHints`
 - `design://tokens`
@@ -74,6 +75,7 @@ Recommended workflow for coding agents:
 - Use `design://previews` first, then load only required `design://preview/...` files.
 - If the client can render local images, prefer `design://preview-file/...` so the agent can embed the returned absolute path directly instead of decoding PNG bytes manually.
 - Avoid whole-page reads unless truly needed.
+- If you need design tokens, read `design://tokens` explicitly instead of assuming they are embedded in page chunks.
 - Keep context bounded with `get_context_bundle(maxBytes)`.
 - For mixed text, if `node.style.text.textRuns` has multiple segments, render ordered inline spans.
 - `build_coverage_checklist` is on-demand. Do not precompute or assume whole-page checklist coverage at import time.

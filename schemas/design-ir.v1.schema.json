@@ -3,7 +3,7 @@
   "$id": "https://example.local/schemas/design-ir.v1.schema.json",
   "title": "Design IR v1",
   "type": "object",
-  "required": ["version", "project", "pages", "nodes", "tokens"],
+  "required": ["version", "project", "pages", "nodes"],
   "properties": {
     "version": { "const": "design-ir.v1" },
     "project": {
@@ -65,7 +65,10 @@
         }
       }
     },
-    "tokens": { "type": "object" }
+    "tokens": {
+      "type": "object",
+      "description": "Optional compatibility field. Canonical token export is served separately via design://tokens."
+    }
   },
   "$defs": {
     "rect": {
@@ -122,7 +125,14 @@
       "required": ["variables", "styles"],
       "properties": {
         "variables": { "type": "array", "items": { "type": "string" } },
-        "styles": { "type": "array", "items": { "type": "string" } }
+        "styles": { "type": "array", "items": { "type": "string" } },
+        "variableProps": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
       }
     },
     "stylePayload": {

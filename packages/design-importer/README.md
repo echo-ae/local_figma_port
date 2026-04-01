@@ -1,7 +1,7 @@
 # design-importer
 
 Rust CLI module that imports `plugin-export.v1` artifacts into:
-- normalized page chunks (`design-ir.v1`)
+- normalized page chunks (`design-ir.v1`, page-scoped and without embedded global tokens)
 - SQLite design store
 - optional UI-kit snapshot/mappings
 

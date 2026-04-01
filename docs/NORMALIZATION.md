@@ -47,6 +47,7 @@ and populate `design_store.sqlite`. These rules are binding for `design-importer
 
 ### C1. Always keep both
 - `styleRefs`: references (variables/styles)
+- `styleRefs.variableProps`: optional semantic variable binding map like `fill`, `stroke`, `padding.l`
 - `style`: resolved payload (fills/strokes/effects/typography), normalized
 
 ### C2. Normalized color representation
@@ -89,6 +90,8 @@ Write `layoutIntent` only for nodes that are Auto Layout containers:
 - `gap.primary`, `gap.wrap`
 - `align.primary`, `align.counter`
 - `sizing.primary`, `sizing.counter`
+
+If a node is not an Auto Layout container, prefer omitting `layoutIntent` over storing synthetic defaults.
 
 ### D2. Preserve real Figma alignment and sizing
 - Do not hardcode `align` or `sizing`.

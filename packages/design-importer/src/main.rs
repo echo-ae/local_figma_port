@@ -143,6 +143,8 @@ struct Rect {
 struct Refs {
     variables: Option<Vec<String>>,
     styles: Option<Vec<String>>,
+    #[serde(rename = "variableProps")]
+    variable_props: Option<Map<String, Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -525,8 +527,7 @@ fn process_page(
             "exportedAt": ctx.project.exported_at.clone()
         },
         "pages": [{"id": page.id.clone(), "name": page.name.clone()}],
-        "nodes": ir_nodes.clone(),
-        "tokens": ctx.tokens.clone()
+        "nodes": ir_nodes.clone()
     });
 
     if let Err(errors) = ir_validator.validate(&ir_obj) {
@@ -732,21 +733,13 @@ fn process_page(
             .map_err(|e| anyhow!(e))?;
         }
 
-        let refs_vars = node_value
-            .get("styleRefs")
-            .and_then(|v| v.get("variables"))
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        for var in refs_vars {
-            if let Some(token_key) = var.as_str() {
-                tx.execute(
-                    "INSERT OR IGNORE INTO token_usages(token_key, node_id, prop, mode) VALUES(?1, ?2, ?3, NULL)",
-                    params![token_key, node_id_db.clone(), "ref"],
-                )
-                .map_err(|e| anyhow!(e))?;
-            }
+        let style_refs_value = node_value.get("styleRefs").cloned().unwrap_or_else(|| json!({}));
+        for (token_key, prop) in extract_token_usage_entries(&style_refs_value) {
+            tx.execute(
+                "INSERT OR IGNORE INTO token_usages(token_key, node_id, prop, mode) VALUES(?1, ?2, ?3, NULL)",
+                params![token_key, node_id_db.clone(), prop],
+            )
+            .map_err(|e| anyhow!(e))?;
         }
     }
 
@@ -788,18 +781,33 @@ fn normalize_nodes(
         let name = normalized_name(raw.name.as_deref(), raw.node_type.as_str(), raw.id.as_str());
 
         let layout_intent = normalize_layout(raw.layout.clone());
-        let style_refs = json!({
-            "variables": raw
-                .refs
-                .as_ref()
-                .and_then(|r| r.variables.clone())
-                .unwrap_or_default(),
-            "styles": raw
-                .refs
-                .as_ref()
-                .and_then(|r| r.styles.clone())
-                .unwrap_or_default()
-        });
+        let mut style_refs = Map::new();
+        style_refs.insert(
+            "variables".to_string(),
+            json!(
+                raw.refs
+                    .as_ref()
+                    .and_then(|r| r.variables.clone())
+                    .unwrap_or_default()
+            ),
+        );
+        style_refs.insert(
+            "styles".to_string(),
+            json!(
+                raw.refs
+                    .as_ref()
+                    .and_then(|r| r.styles.clone())
+                    .unwrap_or_default()
+            ),
+        );
+        if let Some(variable_props) = raw
+            .refs
+            .as_ref()
+            .and_then(|r| r.variable_props.clone())
+            .filter(|props| !props.is_empty())
+        {
+            style_refs.insert("variableProps".to_string(), Value::Object(variable_props));
+        }
 
         let style = raw.style.clone();
         let resources = raw.resources.clone();
@@ -820,7 +828,7 @@ fn normalize_nodes(
                 variant_props: raw.variant_props.clone(),
                 layout_intent,
                 style,
-                style_refs,
+                style_refs: Value::Object(style_refs),
                 resources,
                 inspection_hints,
                 computed: None,
@@ -1012,19 +1020,160 @@ fn normalize_layout(layout: Option<Value>) -> Option<Value> {
     let Some(layout) = layout else {
         return None;
     };
-    let mode = layout.get("mode").and_then(|v| v.as_str());
-    if !matches!(mode, Some("HORIZONTAL") | Some("VERTICAL") | Some("NONE")) {
-        return None;
+    let mode = match layout.get("mode").and_then(|v| v.as_str()) {
+        Some("HORIZONTAL") => "HORIZONTAL",
+        Some("VERTICAL") => "VERTICAL",
+        _ => return None,
+    };
+
+    let mut normalized = Map::new();
+    normalized.insert("mode".to_string(), json!(mode));
+
+    if let Some(wrap) = layout
+        .get("wrap")
+        .and_then(|v| v.as_str())
+        .filter(|value| matches!(*value, "NO_WRAP" | "WRAP"))
+    {
+        normalized.insert("wrap".to_string(), json!(wrap));
+    }
+    if let Some(padding) = normalize_padding(layout.get("padding")) {
+        normalized.insert("padding".to_string(), Value::Object(padding));
+    }
+    if let Some(gap) = normalize_gap(layout.get("gap")) {
+        normalized.insert("gap".to_string(), Value::Object(gap));
+    }
+    if let Some(align) = normalize_align(layout.get("align")) {
+        normalized.insert("align".to_string(), Value::Object(align));
+    }
+    if let Some(sizing) = normalize_sizing(layout.get("sizing")) {
+        normalized.insert("sizing".to_string(), Value::Object(sizing));
     }
 
-    Some(json!({
-        "mode": mode.unwrap_or("NONE"),
-        "wrap": layout.get("wrap").cloned().unwrap_or(json!("NO_WRAP")),
-        "padding": layout.get("padding").cloned().unwrap_or(json!({"t":0,"r":0,"b":0,"l":0})),
-        "gap": layout.get("gap").cloned().unwrap_or(json!({"primary":0,"wrap":null})),
-        "align": layout.get("align").cloned().unwrap_or(json!({"primary":"MIN","counter":"MIN"})),
-        "sizing": layout.get("sizing").cloned().unwrap_or(json!({"primary":"FIXED","counter":"FIXED"}))
-    }))
+    Some(Value::Object(normalized))
+}
+
+fn normalize_padding(value: Option<&Value>) -> Option<Map<String, Value>> {
+    let source = value?.as_object()?;
+    let mut out = Map::new();
+    for key in ["t", "r", "b", "l"] {
+        if let Some(number) = source.get(key).and_then(|v| v.as_f64()) {
+            out.insert(key.to_string(), json!(number));
+        }
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+fn normalize_gap(value: Option<&Value>) -> Option<Map<String, Value>> {
+    let source = value?.as_object()?;
+    let mut out = Map::new();
+    if let Some(primary) = source.get("primary") {
+        if let Some(number) = primary.as_f64() {
+            out.insert("primary".to_string(), json!(number));
+        } else if let Some(label) = primary.as_str().filter(|value| *value == "AUTO") {
+            out.insert("primary".to_string(), json!(label));
+        }
+    }
+    if let Some(wrap) = source.get("wrap") {
+        if wrap.is_null() {
+            out.insert("wrap".to_string(), Value::Null);
+        } else if let Some(number) = wrap.as_f64() {
+            out.insert("wrap".to_string(), json!(number));
+        }
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+fn normalize_align(value: Option<&Value>) -> Option<Map<String, Value>> {
+    let source = value?.as_object()?;
+    let mut out = Map::new();
+    if let Some(primary) = source
+        .get("primary")
+        .and_then(|v| v.as_str())
+        .filter(|value| matches!(*value, "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN"))
+    {
+        out.insert("primary".to_string(), json!(primary));
+    }
+    if let Some(counter) = source
+        .get("counter")
+        .and_then(|v| v.as_str())
+        .filter(|value| matches!(*value, "MIN" | "CENTER" | "MAX" | "STRETCH"))
+    {
+        out.insert("counter".to_string(), json!(counter));
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+fn normalize_sizing(value: Option<&Value>) -> Option<Map<String, Value>> {
+    let source = value?.as_object()?;
+    let mut out = Map::new();
+    if let Some(primary) = source
+        .get("primary")
+        .and_then(|v| v.as_str())
+        .filter(|value| matches!(*value, "FIXED" | "HUG" | "FILL"))
+    {
+        out.insert("primary".to_string(), json!(primary));
+    }
+    if let Some(counter) = source
+        .get("counter")
+        .and_then(|v| v.as_str())
+        .filter(|value| matches!(*value, "FIXED" | "HUG" | "FILL"))
+    {
+        out.insert("counter".to_string(), json!(counter));
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+fn extract_token_usage_entries(style_refs: &Value) -> Vec<(String, String)> {
+    let mut entries: HashSet<(String, String)> = HashSet::new();
+
+    if let Some(variable_props) = style_refs
+        .get("variableProps")
+        .and_then(|value| value.as_object())
+    {
+        for (prop, value) in variable_props {
+            match value {
+                Value::String(token_key) => {
+                    if token_key.starts_with("var:") {
+                        entries.insert((token_key.clone(), prop.clone()));
+                    }
+                }
+                Value::Array(values) => {
+                    for nested in values {
+                        if let Some(token_key) = nested.as_str().filter(|token| token.starts_with("var:")) {
+                            entries.insert((token_key.to_string(), prop.clone()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if entries.is_empty() {
+        if let Some(variables) = style_refs.get("variables").and_then(|value| value.as_array()) {
+            for value in variables {
+                if let Some(token_key) = value.as_str().filter(|token| token.starts_with("var:")) {
+                    entries.insert((token_key.to_string(), "ref".to_string()));
+                }
+            }
+        }
+    }
+
+    let mut out: Vec<(String, String)> = entries.into_iter().collect();
+    out.sort();
+    out
 }
 
 fn build_path_for_node(node_id: &str, nodes: &Map<String, Value>, page_name: &str) -> String {
@@ -1995,4 +2144,69 @@ fn normalize_segment(seg: &str) -> String {
 
 fn collapse_spaces(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_layout_drops_none_mode() {
+        assert_eq!(normalize_layout(Some(json!({ "mode": "NONE" }))), None);
+    }
+
+    #[test]
+    fn normalize_layout_keeps_only_explicit_fields() {
+        let layout = normalize_layout(Some(json!({
+            "mode": "HORIZONTAL",
+            "padding": { "t": 8, "l": 12 },
+            "gap": { "primary": 16 }
+        })))
+        .expect("layout should normalize");
+
+        assert_eq!(
+            layout,
+            json!({
+                "mode": "HORIZONTAL",
+                "padding": { "t": 8.0, "l": 12.0 },
+                "gap": { "primary": 16.0 }
+            })
+        );
+    }
+
+    #[test]
+    fn extract_token_usage_entries_prefers_semantic_variable_props() {
+        let entries = extract_token_usage_entries(&json!({
+            "variables": ["var:generic"],
+            "styles": [],
+            "variableProps": {
+                "fill": ["var:fill-primary"],
+                "padding.l": ["var:space-sm"]
+            }
+        }));
+
+        assert_eq!(
+            entries,
+            vec![
+                ("var:fill-primary".to_string(), "fill".to_string()),
+                ("var:space-sm".to_string(), "padding.l".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_token_usage_entries_falls_back_to_refs() {
+        let entries = extract_token_usage_entries(&json!({
+            "variables": ["var:one", "var:two"],
+            "styles": []
+        }));
+
+        assert_eq!(
+            entries,
+            vec![
+                ("var:one".to_string(), "ref".to_string()),
+                ("var:two".to_string(), "ref".to_string()),
+            ]
+        );
+    }
 }

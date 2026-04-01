@@ -97,17 +97,78 @@ export function extractLayout(node: SceneNode): unknown {
 export function extractRefs(node: SceneNode): {
   variables: string[];
   styles: string[];
+  variableProps?: Record<string, string[]>;
 } {
   const variables: string[] = [];
   const styles: string[] = [];
+  const variableProps = new Map<string, Set<string>>();
+
+  function addVariableRef(prop: string, rawId: string) {
+    if (!rawId || rawId.startsWith("VariableID:") || rawId.startsWith("S:")) {
+      return;
+    }
+    const token = `var:${rawId}`;
+    variables.push(token);
+    if (!variableProps.has(prop)) {
+      variableProps.set(prop, new Set<string>());
+    }
+    variableProps.get(prop)!.add(token);
+  }
+
+  function canonicalVariableProp(path: string[]): string {
+    const cleaned = path.filter((segment) => segment && !/^\d+$/.test(segment));
+    const joined = cleaned.join(".");
+
+    if (joined.includes("paddingTop")) return "padding.t";
+    if (joined.includes("paddingRight")) return "padding.r";
+    if (joined.includes("paddingBottom")) return "padding.b";
+    if (joined.includes("paddingLeft")) return "padding.l";
+    if (joined.includes("itemSpacing")) return "gap.primary";
+    if (joined.includes("counterAxisSpacing")) return "gap.wrap";
+    if (joined.includes("fontSize")) return "text.fontSize";
+    if (joined.includes("lineHeight")) return "text.lineHeight";
+    if (joined.includes("letterSpacing")) return "text.letterSpacing";
+    if (joined.includes("topLeftRadius")) return "cornerRadius.tl";
+    if (joined.includes("topRightRadius")) return "cornerRadius.tr";
+    if (joined.includes("bottomRightRadius")) return "cornerRadius.br";
+    if (joined.includes("bottomLeftRadius")) return "cornerRadius.bl";
+    if (joined.includes("cornerRadius")) return "cornerRadius";
+    if (joined.includes("opacity")) return "opacity";
+    if (joined.includes("fills")) return "fill";
+    if (joined.includes("strokes")) return "stroke";
+    if (joined.includes("effects")) return "effect";
+
+    return cleaned.join(".") || "ref";
+  }
+
+  function collectVariableBindings(value: unknown, path: string[]) {
+    if (typeof value === "string") {
+      addVariableRef(canonicalVariableProp(path), value);
+      return;
+    }
+
+    if (!value || typeof value !== "object") {
+      return;
+    }
+
+    if ("id" in (value as Record<string, unknown>) && typeof (value as Record<string, unknown>).id === "string") {
+      addVariableRef(canonicalVariableProp(path), (value as Record<string, unknown>).id as string);
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        collectVariableBindings(item, path);
+      }
+      return;
+    }
+
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      collectVariableBindings(nested, [...path, key]);
+    }
+  }
 
   if ("boundVariables" in node && (node as any).boundVariables) {
-    const flat = JSON.stringify((node as any).boundVariables);
-    const ids = flat.match(/[\w:;.-]+/g) || [];
-    for (const id of ids) {
-      if (id.startsWith("VariableID:") || id.startsWith("S:")) continue;
-      variables.push(`var:${id}`);
-    }
+    collectVariableBindings((node as any).boundVariables, []);
   }
 
   if (
@@ -139,9 +200,21 @@ export function extractRefs(node: SceneNode): {
     styles.push(`style:${(node as any).textStyleId}`);
   }
 
+  const uniqueVariables = Array.from(new Set(variables)).sort();
+  const normalizedVariableProps: Record<string, string[]> = {};
+  for (const [prop, refs] of Array.from(variableProps.entries()).sort(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
+    normalizedVariableProps[prop] = Array.from(refs).sort();
+  }
+
   return {
-    variables: Array.from(new Set(variables)).sort(),
+    variables: uniqueVariables,
     styles: Array.from(new Set(styles)).sort(),
+    variableProps:
+      Object.keys(normalizedVariableProps).length > 0
+        ? normalizedVariableProps
+        : undefined,
   };
 }
 
