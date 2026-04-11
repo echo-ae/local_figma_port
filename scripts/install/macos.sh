@@ -324,74 +324,12 @@ ensure_codex_app_installed() {
   fi
 }
 
-codex_app_is_running() {
-  if pgrep -x "Codex" >/dev/null 2>&1; then
-    return 0
-  fi
-  if pgrep -if '/Codex\.app/Contents/MacOS/' >/dev/null 2>&1; then
-    return 0
-  fi
-  if osascript -e 'application "Codex" is running' 2>/dev/null | grep -qi '^true$'; then
-    return 0
-  fi
-  return 1
-}
-
-launch_codex_app() {
-  if open -a "$CODEX_APP_BUNDLE" >/dev/null 2>&1; then
-    return 0
-  fi
-  if open -a "Codex" >/dev/null 2>&1; then
-    return 0
-  fi
-  return 1
-}
-
 restart_codex_app_if_needed() {
   if [[ "$SELECT_CODEX_APP" -ne 1 ]]; then
     return
   fi
 
-  local was_running=0
-  local _attempt
-
-  if codex_app_is_running; then
-    was_running=1
-    echo "[install-mac] restarting Codex App so it reloads ~/.codex/config.toml"
-    osascript -e 'tell application "Codex" to quit' >/dev/null 2>&1 || true
-
-    for _attempt in {1..20}; do
-      if ! codex_app_is_running; then
-        break
-      fi
-      sleep 0.5
-    done
-
-    if codex_app_is_running; then
-      echo "[install-mac] note: Codex App did not fully quit; trying to relaunch it anyway." >&2
-    fi
-  else
-    echo "[install-mac] Codex App was not running; launching it so it loads the new MCP server."
-  fi
-
-  if ! launch_codex_app; then
-    echo "[install-mac] note: failed to launch Codex App automatically. Open it manually to see the MCP server in Settings." >&2
-    return
-  fi
-
-  for _attempt in {1..20}; do
-    if codex_app_is_running; then
-      if [[ "$was_running" -eq 1 ]]; then
-        echo "[install-mac] Codex App restarted"
-      else
-        echo "[install-mac] Codex App launched"
-      fi
-      return
-    fi
-    sleep 0.5
-  done
-
-  echo "[install-mac] note: Codex App launch was triggered, but the app did not report itself as running. Restart it manually if the MCP server does not appear in Settings." >&2
+  echo "[install-mac] note: restart Codex App manually after reviewing the Figma plugin instructions so the MCP server appears in Settings."
 }
 
 ensure_mcp_runtime() {
