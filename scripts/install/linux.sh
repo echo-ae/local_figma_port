@@ -1,39 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT_DIR/scripts/lib/local_figma_port_state.sh"
 
 PROJECT_ROOT="$ROOT_DIR"
 STATE_ROOT_DIR="${LOCAL_FIGMA_PORT_STATE_DIR:-$(lfp_default_state_root)}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
-CODEX_APP_DATA_DIR="${CODEX_APP_DATA_DIR:-$HOME/Library/Application Support/Codex}"
-CODEX_APP_BUNDLE="${CODEX_APP_BUNDLE:-/Applications/Codex.app}"
 CLAUDE_HOME_DIR="${CLAUDE_HOME:-$HOME/.claude}"
 CURSOR_HOME_DIR="${CURSOR_HOME:-$HOME/.cursor}"
 
 SELECT_CODEX=0
-SELECT_CODEX_APP=0
 SELECT_CLAUDE=0
 SELECT_CURSOR=0
 EXPLICIT_SELECTION=0
 
 usage() {
   cat <<EOF
-usage: ./scripts/install-mac.sh [options]
+usage: ./scripts/install/linux.sh [options]
 
 options:
   --codex                 install for Codex
-  --codex-app             install for Codex App
   --claude-code           install for Claude Code
   --cursor                install for Cursor
   --all                   install for all supported targets
-  --targets LIST          install for comma-separated target numbers: 1=Codex, 2=Codex App, 3=Claude Code, 4=Cursor
+  --targets LIST          install for comma-separated target numbers: 1=Codex, 2=Claude Code, 3=Cursor
   --project-root PATH     override repository root
   --state-dir PATH        override Local Figma Port state root
   --codex-home PATH       override Codex home (default: \$CODEX_HOME or ~/.codex)
-  --codex-app-data PATH   override Codex App data dir (default: ~/Library/Application Support/Codex)
-  --codex-app-bundle PATH override Codex App bundle path (default: /Applications/Codex.app)
   --claude-home PATH      override Claude home (default: \$CLAUDE_HOME or ~/.claude)
   --cursor-home PATH      override Cursor home (default: ~/.cursor)
   --help                  show this help
@@ -46,17 +41,14 @@ apply_target_token() {
     1|codex)
       SELECT_CODEX=1
       ;;
-    2|codex-app|codex_app)
-      SELECT_CODEX_APP=1
-      ;;
-    3|claude|claude-code|claude_code)
+    2|claude|claude-code|claude_code)
       SELECT_CLAUDE=1
       ;;
-    4|cursor)
+    3|cursor)
       SELECT_CURSOR=1
       ;;
     *)
-      echo "[install-mac] unknown target token: $token" >&2
+      echo "[install-linux] unknown target token: $token" >&2
       exit 2
       ;;
   esac
@@ -66,12 +58,10 @@ apply_targets_csv() {
   local csv="$1"
   local token
   SELECT_CODEX=0
-  SELECT_CODEX_APP=0
   SELECT_CLAUDE=0
   SELECT_CURSOR=0
   if [[ "$csv" == "all" || "$csv" == "ALL" ]]; then
     SELECT_CODEX=1
-    SELECT_CODEX_APP=1
     SELECT_CLAUDE=1
     SELECT_CURSOR=1
     EXPLICIT_SELECTION=1
@@ -93,11 +83,6 @@ while [[ $# -gt 0 ]]; do
       EXPLICIT_SELECTION=1
       shift
       ;;
-    --codex-app)
-      SELECT_CODEX_APP=1
-      EXPLICIT_SELECTION=1
-      shift
-      ;;
     --claude-code)
       SELECT_CLAUDE=1
       EXPLICIT_SELECTION=1
@@ -110,7 +95,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --all)
       SELECT_CODEX=1
-      SELECT_CODEX_APP=1
       SELECT_CLAUDE=1
       SELECT_CURSOR=1
       EXPLICIT_SELECTION=1
@@ -132,14 +116,6 @@ while [[ $# -gt 0 ]]; do
       CODEX_HOME_DIR="$2"
       shift 2
       ;;
-    --codex-app-data)
-      CODEX_APP_DATA_DIR="$2"
-      shift 2
-      ;;
-    --codex-app-bundle)
-      CODEX_APP_BUNDLE="$2"
-      shift 2
-      ;;
     --claude-home)
       CLAUDE_HOME_DIR="$2"
       shift 2
@@ -153,7 +129,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "[install-mac] unknown option: $1" >&2
+      echo "[install-linux] unknown option: $1" >&2
       usage >&2
       exit 2
       ;;
@@ -176,7 +152,7 @@ normalize_path() {
 require_cmd() {
   local cmd="$1"
   if ! command -v "$cmd" >/dev/null 2>&1; then
-    echo "[install-mac] missing required command: $cmd" >&2
+    echo "[install-linux] missing required command: $cmd" >&2
     exit 1
   fi
 }
@@ -184,8 +160,8 @@ require_cmd() {
 ensure_sqlite_fts5() {
   require_cmd sqlite3
   if ! sqlite3 :memory: "CREATE VIRTUAL TABLE temp.t USING fts5(x); DROP TABLE temp.t;" >/dev/null 2>&1; then
-    echo "[install-mac] sqlite3 is present, but this build does not support FTS5." >&2
-    echo "[install-mac] install a sqlite3 build with FTS5 enabled and re-run the installer." >&2
+    echo "[install-linux] sqlite3 is present, but this build does not support FTS5." >&2
+    echo "[install-linux] install a sqlite3 build with FTS5 enabled and re-run the installer." >&2
     exit 1
   fi
 }
@@ -193,11 +169,11 @@ ensure_sqlite_fts5() {
 validate_skill_frontmatter() {
   local file="$1"
   if [[ ! -f "$file" ]]; then
-    echo "[install-mac] missing skill file: $file" >&2
+    echo "[install-linux] missing skill file: $file" >&2
     exit 1
   fi
   if ! head -n 1 "$file" | grep -Fxq -- "---"; then
-    echo "[install-mac] skill file is missing opening YAML frontmatter delimiter: $file" >&2
+    echo "[install-linux] skill file is missing opening YAML frontmatter delimiter: $file" >&2
     exit 1
   fi
 }
@@ -226,13 +202,13 @@ CODEX_TOML_MARKER_START="# >>> FIGMA PORT MCP START >>>"
 CODEX_TOML_MARKER_END="# <<< FIGMA PORT MCP END <<<"
 
 if [[ ! -f "$REPO_SKILL" ]]; then
-  echo "[install-mac] missing repo skill: $REPO_SKILL" >&2
+  echo "[install-linux] missing repo skill: $REPO_SKILL" >&2
   exit 1
 fi
 validate_skill_frontmatter "$REPO_SKILL"
 
 if [[ ! -f "$REPO_MCP_DIR/package.json" ]]; then
-  echo "[install-mac] missing MCP package: $REPO_MCP_DIR/package.json" >&2
+  echo "[install-linux] missing MCP package: $REPO_MCP_DIR/package.json" >&2
   exit 1
 fi
 
@@ -241,17 +217,15 @@ print_target_menu() {
 
 Select targets to configure by number:
   [1] Codex
-  [2] Codex App
-  [3] Claude Code
-  [4] Cursor
+  [2] Claude Code
+  [3] Cursor
 
-Enter numbers separated by commas (example: 1,2,4) or 'all'. Press Enter for all targets.
+Enter numbers separated by commas (example: 1,2,3) or 'all'. Press Enter for all targets.
 EOF
 }
 
 run_interactive_selection() {
   SELECT_CODEX=1
-  SELECT_CODEX_APP=1
   SELECT_CLAUDE=1
   SELECT_CURSOR=1
 
@@ -264,8 +238,8 @@ run_interactive_selection() {
         ;;
       *)
         apply_targets_csv "$choice"
-        if [[ "$SELECT_CODEX" -eq 0 && "$SELECT_CODEX_APP" -eq 0 && "$SELECT_CLAUDE" -eq 0 && "$SELECT_CURSOR" -eq 0 ]]; then
-          echo "[install-mac] select at least one target." >&2
+        if [[ "$SELECT_CODEX" -eq 0 && "$SELECT_CLAUDE" -eq 0 && "$SELECT_CURSOR" -eq 0 ]]; then
+          echo "[install-linux] select at least one target." >&2
           continue
         fi
         break
@@ -278,71 +252,29 @@ if [[ "$EXPLICIT_SELECTION" -eq 0 ]]; then
   if [[ -t 0 ]]; then
     run_interactive_selection
   else
-    echo "[install-mac] no target selection provided and stdin is not interactive." >&2
-    echo "[install-mac] use --all, --targets, or one of --codex / --codex-app / --claude-code / --cursor." >&2
+    echo "[install-linux] no target selection provided and stdin is not interactive." >&2
+    echo "[install-linux] use --all, --targets, or one of --codex / --claude-code / --cursor." >&2
     exit 2
   fi
 fi
-
-ensure_codex_app_installed() {
-  if [[ "$SELECT_CODEX_APP" -ne 1 ]]; then
-    return
-  fi
-  if [[ ! -d "$CODEX_APP_DATA_DIR" && ! -d "$CODEX_APP_BUNDLE" ]]; then
-    echo "[install-mac] Codex App target selected, but no app data dir or bundle was found." >&2
-    echo "[install-mac] looked for: $CODEX_APP_DATA_DIR and $CODEX_APP_BUNDLE" >&2
-    exit 1
-  fi
-}
-
-codex_app_is_running() {
-  pgrep -x "Codex" >/dev/null 2>&1
-}
-
-restart_codex_app_if_needed() {
-  if [[ "$SELECT_CODEX_APP" -ne 1 ]]; then
-    return
-  fi
-
-  if ! codex_app_is_running; then
-    echo "[install-mac] note: Codex App was not running. Launch it to load the new MCP server."
-    return
-  fi
-
-  echo "[install-mac] restarting Codex App so it reloads ~/.codex/config.toml"
-  osascript -e 'tell application "Codex" to quit' >/dev/null 2>&1 || true
-
-  local _attempt
-  for _attempt in {1..20}; do
-    if ! codex_app_is_running; then
-      break
-    fi
-    sleep 0.5
-  done
-
-  if ! open -a "$CODEX_APP_BUNDLE" >/dev/null 2>&1; then
-    if ! open -a "Codex" >/dev/null 2>&1; then
-      echo "[install-mac] note: failed to relaunch Codex App automatically. Open it manually." >&2
-      return
-    fi
-  fi
-
-  echo "[install-mac] Codex App restarted"
-}
 
 ensure_mcp_runtime() {
   require_cmd node
   require_cmd npm
 
-  echo "[install-mac] bootstrapping MCP runtime in $REPO_MCP_DIR"
+  echo "[install-linux] bootstrapping MCP runtime in $REPO_MCP_DIR"
   (
     cd "$REPO_MCP_DIR"
-    npm install --no-package-lock >/dev/null
+    if [[ -d node_modules ]]; then
+      echo "[install-linux] reusing existing node_modules in $REPO_MCP_DIR"
+    else
+      npm install --no-package-lock >/dev/null
+    fi
     npm run build >/dev/null
   )
 
   if [[ ! -f "$REPO_MCP_ENTRY" ]]; then
-    echo "[install-mac] MCP build did not produce $REPO_MCP_ENTRY" >&2
+    echo "[install-linux] MCP build did not produce $REPO_MCP_ENTRY" >&2
     exit 1
   fi
 }
@@ -354,11 +286,11 @@ ensure_importer_runtime() {
   require_cmd rustc
 
   if [[ ! -f "$manifest" ]]; then
-    echo "[install-mac] missing importer manifest: $manifest" >&2
+    echo "[install-linux] missing importer manifest: $manifest" >&2
     exit 1
   fi
 
-  echo "[install-mac] bootstrapping importer runtime in $PROJECT_ROOT/packages/design-importer"
+  echo "[install-linux] bootstrapping importer runtime in $PROJECT_ROOT/packages/design-importer"
   cargo build --manifest-path "$manifest" --release >/dev/null
 }
 
@@ -379,7 +311,7 @@ if (raw) {
 }
 NODE
   then
-    echo "[install-mac] invalid JSON in $label: $file" >&2
+    echo "[install-linux] invalid JSON in $label: $file" >&2
     exit 1
   fi
 }
@@ -406,7 +338,7 @@ seed_state_data_if_needed() {
   target_sample="$(find "$REPO_DATA" -mindepth 1 -print -quit 2>/dev/null || true)"
   if [[ -n "$source_sample" && -z "$target_sample" ]]; then
     cp -R "$PROJECT_DATA_DIR"/. "$REPO_DATA"/
-    echo "[install-mac] seeded stable state data from $PROJECT_DATA_DIR"
+    echo "[install-linux] seeded stable state data from $PROJECT_DATA_DIR"
   fi
 }
 
@@ -450,7 +382,7 @@ write_with_backup() {
   local tmp="$2"
 
   if [[ -f "$file" ]] && cmp -s "$file" "$tmp"; then
-    echo "[install-mac] unchanged: $file"
+    echo "[install-linux] unchanged: $file"
     rm -f "$tmp"
     return
   fi
@@ -458,10 +390,10 @@ write_with_backup() {
   mkdir -p "$(dirname "$file")"
   if [[ -f "$file" ]]; then
     cp "$file" "$file.local-figma-port.$TIMESTAMP.bak"
-    echo "[install-mac] backup: $file.local-figma-port.$TIMESTAMP.bak"
+    echo "[install-linux] backup: $file.local-figma-port.$TIMESTAMP.bak"
   fi
   mv "$tmp" "$file"
-  echo "[install-mac] wrote: $file"
+  echo "[install-linux] wrote: $file"
 }
 
 upsert_markdown_block() {
@@ -495,8 +427,8 @@ upsert_codex_toml_block() {
   local tmp
 
   if [[ -f "$file" ]] && grep -Fq "[mcp_servers.local-figma-port]" "$file" && ! grep -Fq "$CODEX_TOML_MARKER_START" "$file"; then
-    echo "[install-mac] found an unmanaged [mcp_servers.local-figma-port] block in $file" >&2
-    echo "[install-mac] refusing to overwrite it automatically." >&2
+    echo "[install-linux] found an unmanaged [mcp_servers.local-figma-port] block in $file" >&2
+    echo "[install-linux] refusing to overwrite it automatically." >&2
     exit 1
   fi
 
@@ -574,26 +506,23 @@ EOF
 
 print_summary() {
   echo
-  echo "[install-mac] summary"
+  echo "[install-linux] summary"
   [[ "$SELECT_CODEX" -eq 1 ]] && echo "  - Codex"
-  [[ "$SELECT_CODEX_APP" -eq 1 ]] && echo "  - Codex App"
   [[ "$SELECT_CLAUDE" -eq 1 ]] && echo "  - Claude Code"
   [[ "$SELECT_CURSOR" -eq 1 ]] && echo "  - Cursor"
   echo "  - project root: $PROJECT_ROOT"
   echo "  - state root: $STATE_ROOT_DIR"
-  [[ "$SELECT_CODEX_APP" -eq 1 ]] && echo "  - codex app data: $CODEX_APP_DATA_DIR"
 }
 
 print_summary
 
 preflight_project_json_configs
-ensure_codex_app_installed
 ensure_sqlite_fts5
 ensure_mcp_runtime
 ensure_importer_runtime
 seed_state_data_if_needed
 
-if [[ "$SELECT_CODEX" -eq 1 || "$SELECT_CODEX_APP" -eq 1 ]]; then
+if [[ "$SELECT_CODEX" -eq 1 ]]; then
   copy_skill_file "$CODEX_HOME_DIR/skills/local-figma-port"
   upsert_codex_toml_block "$CODEX_HOME_DIR/config.toml" "$(render_codex_toml_block)"
 fi
@@ -604,7 +533,7 @@ if [[ "$SELECT_CLAUDE" -eq 1 ]]; then
   upsert_markdown_block "$PROJECT_ROOT/CLAUDE.md" "$CLAUDE_MARKER_START" "$CLAUDE_MARKER_END" "$(render_claude_block)"
 fi
 
-if [[ "$SELECT_CODEX" -eq 1 || "$SELECT_CODEX_APP" -eq 1 || "$SELECT_CURSOR" -eq 1 ]]; then
+if [[ "$SELECT_CODEX" -eq 1 || "$SELECT_CURSOR" -eq 1 ]]; then
   upsert_markdown_block "$PROJECT_ROOT/AGENTS.md" "$AGENTS_MARKER_START" "$AGENTS_MARKER_END" "$(render_agents_block)"
 fi
 
@@ -614,13 +543,9 @@ fi
 
 VERIFY_ARGS=(--project-root "$PROJECT_ROOT" --state-dir "$STATE_ROOT_DIR" --codex-home "$CODEX_HOME_DIR" --claude-home "$CLAUDE_HOME_DIR" --cursor-home "$CURSOR_HOME_DIR")
 [[ "$SELECT_CODEX" -eq 1 ]] && VERIFY_ARGS+=(--codex)
-[[ "$SELECT_CODEX_APP" -eq 1 ]] && VERIFY_ARGS+=(--codex-app --codex-app-data "$CODEX_APP_DATA_DIR" --codex-app-bundle "$CODEX_APP_BUNDLE")
 [[ "$SELECT_CLAUDE" -eq 1 ]] && VERIFY_ARGS+=(--claude-code)
 [[ "$SELECT_CURSOR" -eq 1 ]] && VERIFY_ARGS+=(--cursor)
 
-"$PROJECT_ROOT/scripts/verify-mac.sh" "${VERIFY_ARGS[@]}"
-LOCAL_FIGMA_PORT_STATE_DIR="$STATE_ROOT_DIR" DATA_DIR="$REPO_DATA" SQLITE_PATH="$REPO_SQLITE" "$PROJECT_ROOT/scripts/start_mcp.sh"
-if [[ "$SELECT_CODEX_APP" -eq 1 ]]; then
-  restart_codex_app_if_needed
-fi
-echo "[install-mac] install complete"
+"$PROJECT_ROOT/scripts/verify/linux.sh" "${VERIFY_ARGS[@]}"
+LOCAL_FIGMA_PORT_STATE_DIR="$STATE_ROOT_DIR" DATA_DIR="$REPO_DATA" SQLITE_PATH="$REPO_SQLITE" "$PROJECT_ROOT/scripts/runtime/start.sh"
+echo "[install-linux] install complete"

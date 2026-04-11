@@ -1,33 +1,44 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT_DIR/scripts/lib/local_figma_port_state.sh"
 
 PROJECT_ROOT="$ROOT_DIR"
 STATE_ROOT_DIR="${LOCAL_FIGMA_PORT_STATE_DIR:-$(lfp_default_state_root)}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
+CODEX_APP_DATA_DIR="${CODEX_APP_DATA_DIR:-$HOME/Library/Application Support/Codex}"
+CODEX_APP_BUNDLE="${CODEX_APP_BUNDLE:-/Applications/Codex.app}"
 CLAUDE_HOME_DIR="${CLAUDE_HOME:-$HOME/.claude}"
 CURSOR_HOME_DIR="${CURSOR_HOME:-$HOME/.cursor}"
 
 SELECT_CODEX=0
+SELECT_CODEX_APP=0
 SELECT_CLAUDE=0
 SELECT_CURSOR=0
 EXPLICIT_SELECTION=0
+USE_PREBUILT=0
+CONFIG_ROOT=""
 
 usage() {
   cat <<EOF
-usage: ./scripts/install-linux.sh [options]
+usage: ./scripts/install/macos.sh [options]
 
 options:
   --codex                 install for Codex
+  --codex-app             install for Codex App
   --claude-code           install for Claude Code
   --cursor                install for Cursor
   --all                   install for all supported targets
-  --targets LIST          install for comma-separated target numbers: 1=Codex, 2=Claude Code, 3=Cursor
+  --use-prebuilt          install from a prebuilt runtime bundle without local Rust/TypeScript builds
+  --targets LIST          install for comma-separated target numbers: 1=Codex, 2=Codex App, 3=Claude Code, 4=Cursor
   --project-root PATH     override repository root
+  --config-root PATH      override workspace root for project-local config files (.mcp.json, .cursor/mcp.json, CLAUDE.md, AGENTS.md)
   --state-dir PATH        override Local Figma Port state root
   --codex-home PATH       override Codex home (default: \$CODEX_HOME or ~/.codex)
+  --codex-app-data PATH   override Codex App data dir (default: ~/Library/Application Support/Codex)
+  --codex-app-bundle PATH override Codex App bundle path (default: /Applications/Codex.app)
   --claude-home PATH      override Claude home (default: \$CLAUDE_HOME or ~/.claude)
   --cursor-home PATH      override Cursor home (default: ~/.cursor)
   --help                  show this help
@@ -40,14 +51,17 @@ apply_target_token() {
     1|codex)
       SELECT_CODEX=1
       ;;
-    2|claude|claude-code|claude_code)
+    2|codex-app|codex_app)
+      SELECT_CODEX_APP=1
+      ;;
+    3|claude|claude-code|claude_code)
       SELECT_CLAUDE=1
       ;;
-    3|cursor)
+    4|cursor)
       SELECT_CURSOR=1
       ;;
     *)
-      echo "[install-linux] unknown target token: $token" >&2
+      echo "[install-mac] unknown target token: $token" >&2
       exit 2
       ;;
   esac
@@ -57,10 +71,12 @@ apply_targets_csv() {
   local csv="$1"
   local token
   SELECT_CODEX=0
+  SELECT_CODEX_APP=0
   SELECT_CLAUDE=0
   SELECT_CURSOR=0
   if [[ "$csv" == "all" || "$csv" == "ALL" ]]; then
     SELECT_CODEX=1
+    SELECT_CODEX_APP=1
     SELECT_CLAUDE=1
     SELECT_CURSOR=1
     EXPLICIT_SELECTION=1
@@ -82,6 +98,11 @@ while [[ $# -gt 0 ]]; do
       EXPLICIT_SELECTION=1
       shift
       ;;
+    --codex-app)
+      SELECT_CODEX_APP=1
+      EXPLICIT_SELECTION=1
+      shift
+      ;;
     --claude-code)
       SELECT_CLAUDE=1
       EXPLICIT_SELECTION=1
@@ -94,9 +115,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --all)
       SELECT_CODEX=1
+      SELECT_CODEX_APP=1
       SELECT_CLAUDE=1
       SELECT_CURSOR=1
       EXPLICIT_SELECTION=1
+      shift
+      ;;
+    --use-prebuilt)
+      USE_PREBUILT=1
       shift
       ;;
     --targets)
@@ -107,12 +133,24 @@ while [[ $# -gt 0 ]]; do
       PROJECT_ROOT="$2"
       shift 2
       ;;
+    --config-root)
+      CONFIG_ROOT="$2"
+      shift 2
+      ;;
     --state-dir)
       STATE_ROOT_DIR="$2"
       shift 2
       ;;
     --codex-home)
       CODEX_HOME_DIR="$2"
+      shift 2
+      ;;
+    --codex-app-data)
+      CODEX_APP_DATA_DIR="$2"
+      shift 2
+      ;;
+    --codex-app-bundle)
+      CODEX_APP_BUNDLE="$2"
       shift 2
       ;;
     --claude-home)
@@ -128,7 +166,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "[install-linux] unknown option: $1" >&2
+      echo "[install-mac] unknown option: $1" >&2
       usage >&2
       exit 2
       ;;
@@ -151,16 +189,17 @@ normalize_path() {
 require_cmd() {
   local cmd="$1"
   if ! command -v "$cmd" >/dev/null 2>&1; then
-    echo "[install-linux] missing required command: $cmd" >&2
+    echo "[install-mac] missing required command: $cmd" >&2
     exit 1
   fi
 }
 
 ensure_sqlite_fts5() {
   require_cmd sqlite3
+  REPO_SQLITE3_BIN="$(command -v sqlite3)"
   if ! sqlite3 :memory: "CREATE VIRTUAL TABLE temp.t USING fts5(x); DROP TABLE temp.t;" >/dev/null 2>&1; then
-    echo "[install-linux] sqlite3 is present, but this build does not support FTS5." >&2
-    echo "[install-linux] install a sqlite3 build with FTS5 enabled and re-run the installer." >&2
+    echo "[install-mac] sqlite3 is present, but this build does not support FTS5." >&2
+    echo "[install-mac] install a sqlite3 build with FTS5 enabled and re-run the installer." >&2
     exit 1
   fi
 }
@@ -168,21 +207,35 @@ ensure_sqlite_fts5() {
 validate_skill_frontmatter() {
   local file="$1"
   if [[ ! -f "$file" ]]; then
-    echo "[install-linux] missing skill file: $file" >&2
+    echo "[install-mac] missing skill file: $file" >&2
     exit 1
   fi
   if ! head -n 1 "$file" | grep -Fxq -- "---"; then
-    echo "[install-linux] skill file is missing opening YAML frontmatter delimiter: $file" >&2
+    echo "[install-mac] skill file is missing opening YAML frontmatter delimiter: $file" >&2
     exit 1
   fi
 }
 
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
+if [[ -z "$CONFIG_ROOT" ]]; then
+  CONFIG_ROOT="$PROJECT_ROOT"
+else
+  CONFIG_ROOT="$(normalize_path "$CONFIG_ROOT")"
+  mkdir -p "$CONFIG_ROOT"
+  CONFIG_ROOT="$(cd "$CONFIG_ROOT" && pwd)"
+fi
 STATE_ROOT_DIR="$(normalize_path "$STATE_ROOT_DIR")"
 REPO_SKILL="$PROJECT_ROOT/SKILL.md"
 REPO_MCP_DIR="$PROJECT_ROOT/packages/mcp-server"
+REPO_MCP_PACKAGE="$REPO_MCP_DIR/package.json"
 REPO_MCP_ENTRY="$PROJECT_ROOT/packages/mcp-server/dist/mcp-stdio.js"
+REPO_MCP_HTTP_ENTRY="$PROJECT_ROOT/packages/mcp-server/dist/index.js"
 PROJECT_DATA_DIR="$PROJECT_ROOT/data"
+REPO_IMPORTER_EXE="$PROJECT_ROOT/packages/design-importer/target/release/design-importer"
+REPO_PLUGIN_DIR="$PROJECT_ROOT/packages/figma-exporter-plugin"
+REPO_PLUGIN_ENTRY="$REPO_PLUGIN_DIR/dist/main.js"
+REPO_PLUGIN_MANIFEST="$REPO_PLUGIN_DIR/manifest.json"
+REPO_PLUGIN_PACKAGE="$REPO_PLUGIN_DIR/package.json"
 REPO_DATA="$(lfp_data_dir "$STATE_ROOT_DIR")"
 REPO_SQLITE="$(lfp_sqlite_path "$STATE_ROOT_DIR")"
 RUN_DIR="$(lfp_run_dir "$STATE_ROOT_DIR")"
@@ -191,6 +244,7 @@ REPO_SKILL_POSIX="$REPO_SKILL"
 REPO_MCP_ENTRY_POSIX="$REPO_MCP_ENTRY"
 REPO_SQLITE_POSIX="$REPO_SQLITE"
 REPO_DATA_POSIX="$REPO_DATA"
+REPO_SQLITE3_BIN=""
 TIMESTAMP="$(date +%Y%m%d%H%M%S)"
 
 AGENTS_MARKER_START="<!-- FIGMA PORT MANAGED BLOCK START -->"
@@ -201,13 +255,13 @@ CODEX_TOML_MARKER_START="# >>> FIGMA PORT MCP START >>>"
 CODEX_TOML_MARKER_END="# <<< FIGMA PORT MCP END <<<"
 
 if [[ ! -f "$REPO_SKILL" ]]; then
-  echo "[install-linux] missing repo skill: $REPO_SKILL" >&2
+  echo "[install-mac] missing repo skill: $REPO_SKILL" >&2
   exit 1
 fi
 validate_skill_frontmatter "$REPO_SKILL"
 
-if [[ ! -f "$REPO_MCP_DIR/package.json" ]]; then
-  echo "[install-linux] missing MCP package: $REPO_MCP_DIR/package.json" >&2
+if [[ ! -f "$REPO_MCP_PACKAGE" ]]; then
+  echo "[install-mac] missing MCP package: $REPO_MCP_PACKAGE" >&2
   exit 1
 fi
 
@@ -216,15 +270,17 @@ print_target_menu() {
 
 Select targets to configure by number:
   [1] Codex
-  [2] Claude Code
-  [3] Cursor
+  [2] Codex App
+  [3] Claude Code
+  [4] Cursor
 
-Enter numbers separated by commas (example: 1,2,3) or 'all'. Press Enter for all targets.
+Enter numbers separated by commas (example: 1,2,4) or 'all'. Press Enter for all targets.
 EOF
 }
 
 run_interactive_selection() {
   SELECT_CODEX=1
+  SELECT_CODEX_APP=1
   SELECT_CLAUDE=1
   SELECT_CURSOR=1
 
@@ -237,8 +293,8 @@ run_interactive_selection() {
         ;;
       *)
         apply_targets_csv "$choice"
-        if [[ "$SELECT_CODEX" -eq 0 && "$SELECT_CLAUDE" -eq 0 && "$SELECT_CURSOR" -eq 0 ]]; then
-          echo "[install-linux] select at least one target." >&2
+        if [[ "$SELECT_CODEX" -eq 0 && "$SELECT_CODEX_APP" -eq 0 && "$SELECT_CLAUDE" -eq 0 && "$SELECT_CURSOR" -eq 0 ]]; then
+          echo "[install-mac] select at least one target." >&2
           continue
         fi
         break
@@ -251,25 +307,125 @@ if [[ "$EXPLICIT_SELECTION" -eq 0 ]]; then
   if [[ -t 0 ]]; then
     run_interactive_selection
   else
-    echo "[install-linux] no target selection provided and stdin is not interactive." >&2
-    echo "[install-linux] use --all, --targets, or one of --codex / --claude-code / --cursor." >&2
+    echo "[install-mac] no target selection provided and stdin is not interactive." >&2
+    echo "[install-mac] use --all, --targets, or one of --codex / --codex-app / --claude-code / --cursor." >&2
     exit 2
   fi
 fi
+
+ensure_codex_app_installed() {
+  if [[ "$SELECT_CODEX_APP" -ne 1 ]]; then
+    return
+  fi
+  if [[ ! -d "$CODEX_APP_DATA_DIR" && ! -d "$CODEX_APP_BUNDLE" ]]; then
+    echo "[install-mac] Codex App target selected, but no app data dir or bundle was found." >&2
+    echo "[install-mac] looked for: $CODEX_APP_DATA_DIR and $CODEX_APP_BUNDLE" >&2
+    exit 1
+  fi
+}
+
+codex_app_is_running() {
+  if pgrep -x "Codex" >/dev/null 2>&1; then
+    return 0
+  fi
+  if pgrep -if '/Codex\.app/Contents/MacOS/' >/dev/null 2>&1; then
+    return 0
+  fi
+  if osascript -e 'application "Codex" is running' 2>/dev/null | grep -qi '^true$'; then
+    return 0
+  fi
+  return 1
+}
+
+launch_codex_app() {
+  if open -a "$CODEX_APP_BUNDLE" >/dev/null 2>&1; then
+    return 0
+  fi
+  if open -a "Codex" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+restart_codex_app_if_needed() {
+  if [[ "$SELECT_CODEX_APP" -ne 1 ]]; then
+    return
+  fi
+
+  local was_running=0
+  local _attempt
+
+  if codex_app_is_running; then
+    was_running=1
+    echo "[install-mac] restarting Codex App so it reloads ~/.codex/config.toml"
+    osascript -e 'tell application "Codex" to quit' >/dev/null 2>&1 || true
+
+    for _attempt in {1..20}; do
+      if ! codex_app_is_running; then
+        break
+      fi
+      sleep 0.5
+    done
+
+    if codex_app_is_running; then
+      echo "[install-mac] note: Codex App did not fully quit; trying to relaunch it anyway." >&2
+    fi
+  else
+    echo "[install-mac] Codex App was not running; launching it so it loads the new MCP server."
+  fi
+
+  if ! launch_codex_app; then
+    echo "[install-mac] note: failed to launch Codex App automatically. Open it manually to see the MCP server in Settings." >&2
+    return
+  fi
+
+  for _attempt in {1..20}; do
+    if codex_app_is_running; then
+      if [[ "$was_running" -eq 1 ]]; then
+        echo "[install-mac] Codex App restarted"
+      else
+        echo "[install-mac] Codex App launched"
+      fi
+      return
+    fi
+    sleep 0.5
+  done
+
+  echo "[install-mac] note: Codex App launch was triggered, but the app did not report itself as running. Restart it manually if the MCP server does not appear in Settings." >&2
+}
 
 ensure_mcp_runtime() {
   require_cmd node
   require_cmd npm
 
-  echo "[install-linux] bootstrapping MCP runtime in $REPO_MCP_DIR"
+  if [[ "$USE_PREBUILT" -eq 1 ]]; then
+    ensure_prebuilt_bundle_support_files
+    echo "[install-mac] bootstrapping MCP runtime in $REPO_MCP_DIR"
+    (
+      cd "$REPO_MCP_DIR"
+      if [[ -d node_modules ]]; then
+        echo "[install-mac] reusing existing node_modules in $REPO_MCP_DIR"
+      else
+        npm install --omit=dev --no-package-lock >/dev/null
+      fi
+    )
+    echo "[install-mac] using prebuilt MCP runtime at $REPO_MCP_ENTRY"
+    return
+  fi
+
+  echo "[install-mac] bootstrapping MCP runtime in $REPO_MCP_DIR"
   (
     cd "$REPO_MCP_DIR"
-    npm install --no-package-lock >/dev/null
+    if [[ -d node_modules ]]; then
+      echo "[install-mac] reusing existing node_modules in $REPO_MCP_DIR"
+    else
+      npm install --no-package-lock >/dev/null
+    fi
     npm run build >/dev/null
   )
 
   if [[ ! -f "$REPO_MCP_ENTRY" ]]; then
-    echo "[install-linux] MCP build did not produce $REPO_MCP_ENTRY" >&2
+    echo "[install-mac] MCP build did not produce $REPO_MCP_ENTRY" >&2
     exit 1
   fi
 }
@@ -277,16 +433,86 @@ ensure_mcp_runtime() {
 ensure_importer_runtime() {
   local manifest="$PROJECT_ROOT/packages/design-importer/Cargo.toml"
 
+  if [[ "$USE_PREBUILT" -eq 1 ]]; then
+    ensure_prebuilt_bundle_support_files
+    chmod +x "$REPO_IMPORTER_EXE" >/dev/null 2>&1 || true
+    echo "[install-mac] using prebuilt importer runtime at $REPO_IMPORTER_EXE"
+    return
+  fi
+
   require_cmd cargo
   require_cmd rustc
 
   if [[ ! -f "$manifest" ]]; then
-    echo "[install-linux] missing importer manifest: $manifest" >&2
+    echo "[install-mac] missing importer manifest: $manifest" >&2
     exit 1
   fi
 
-  echo "[install-linux] bootstrapping importer runtime in $PROJECT_ROOT/packages/design-importer"
+  echo "[install-mac] bootstrapping importer runtime in $PROJECT_ROOT/packages/design-importer"
   cargo build --manifest-path "$manifest" --release >/dev/null
+}
+
+ensure_figma_plugin_runtime() {
+  require_cmd npm
+
+  if [[ "$USE_PREBUILT" -eq 1 ]]; then
+    ensure_prebuilt_bundle_support_files
+    echo "[install-mac] using prebuilt Figma plugin bundle at $REPO_PLUGIN_ENTRY"
+    return
+  fi
+
+  if [[ ! -f "$REPO_PLUGIN_PACKAGE" ]]; then
+    echo "[install-mac] missing Figma plugin package: $REPO_PLUGIN_PACKAGE" >&2
+    exit 1
+  fi
+
+  echo "[install-mac] bootstrapping Figma plugin runtime in $REPO_PLUGIN_DIR"
+  (
+    cd "$REPO_PLUGIN_DIR"
+    if [[ -d node_modules ]]; then
+      echo "[install-mac] reusing existing node_modules in $REPO_PLUGIN_DIR"
+    else
+      npm install --no-package-lock >/dev/null
+    fi
+    npm run build >/dev/null
+  )
+
+  if [[ ! -f "$REPO_PLUGIN_ENTRY" ]]; then
+    echo "[install-mac] Figma plugin build did not produce $REPO_PLUGIN_ENTRY" >&2
+    exit 1
+  fi
+}
+
+ensure_prebuilt_bundle_support_files() {
+  if [[ ! -f "$REPO_MCP_ENTRY" ]]; then
+    echo "[install-mac] missing prebuilt MCP stdio entry: $REPO_MCP_ENTRY" >&2
+    exit 1
+  fi
+  if [[ ! -f "$REPO_MCP_HTTP_ENTRY" ]]; then
+    echo "[install-mac] missing prebuilt MCP HTTP entry: $REPO_MCP_HTTP_ENTRY" >&2
+    exit 1
+  fi
+  if [[ ! -f "$REPO_MCP_PACKAGE" ]]; then
+    echo "[install-mac] missing prebuilt MCP package metadata: $REPO_MCP_PACKAGE" >&2
+    exit 1
+  fi
+  if [[ ! -f "$REPO_IMPORTER_EXE" ]]; then
+    echo "[install-mac] missing prebuilt importer executable: $REPO_IMPORTER_EXE" >&2
+    exit 1
+  fi
+  if [[ ! -f "$REPO_PLUGIN_ENTRY" ]]; then
+    echo "[install-mac] missing prebuilt Figma plugin bundle: $REPO_PLUGIN_ENTRY" >&2
+    exit 1
+  fi
+  if [[ ! -f "$REPO_PLUGIN_MANIFEST" ]]; then
+    echo "[install-mac] missing prebuilt Figma plugin manifest: $REPO_PLUGIN_MANIFEST" >&2
+    exit 1
+  fi
+  if ! grep -Fq "IMPORTER_EXE" "$REPO_MCP_HTTP_ENTRY"; then
+    echo "[install-mac] prebuilt MCP HTTP entry does not support prebuilt importer execution yet: $REPO_MCP_HTTP_ENTRY" >&2
+    echo "[install-mac] rebuild the macOS release bundle from the updated repository before publishing it." >&2
+    exit 1
+  fi
 }
 
 validate_json_file_if_present() {
@@ -306,17 +532,17 @@ if (raw) {
 }
 NODE
   then
-    echo "[install-linux] invalid JSON in $label: $file" >&2
+    echo "[install-mac] invalid JSON in $label: $file" >&2
     exit 1
   fi
 }
 
 preflight_project_json_configs() {
   if [[ "$SELECT_CLAUDE" -eq 1 ]]; then
-    validate_json_file_if_present "$PROJECT_ROOT/.mcp.json" "Claude project MCP config"
+    validate_json_file_if_present "$CONFIG_ROOT/.mcp.json" "Claude project MCP config"
   fi
   if [[ "$SELECT_CURSOR" -eq 1 ]]; then
-    validate_json_file_if_present "$PROJECT_ROOT/.cursor/mcp.json" "Cursor project MCP config"
+    validate_json_file_if_present "$CONFIG_ROOT/.cursor/mcp.json" "Cursor project MCP config"
   fi
 }
 
@@ -333,7 +559,7 @@ seed_state_data_if_needed() {
   target_sample="$(find "$REPO_DATA" -mindepth 1 -print -quit 2>/dev/null || true)"
   if [[ -n "$source_sample" && -z "$target_sample" ]]; then
     cp -R "$PROJECT_DATA_DIR"/. "$REPO_DATA"/
-    echo "[install-linux] seeded stable state data from $PROJECT_DATA_DIR"
+    echo "[install-mac] seeded stable state data from $PROJECT_DATA_DIR"
   fi
 }
 
@@ -368,7 +594,7 @@ render_codex_toml_block() {
 [mcp_servers.local-figma-port]
 command = "node"
 args = ["$REPO_MCP_ENTRY_POSIX"]
-env = { SQLITE_PATH = "$REPO_SQLITE_POSIX", DATA_DIR = "$REPO_DATA_POSIX" }
+env = { SQLITE3_BIN = "$REPO_SQLITE3_BIN", SQLITE_PATH = "$REPO_SQLITE_POSIX", DATA_DIR = "$REPO_DATA_POSIX" }
 EOF
 }
 
@@ -377,7 +603,7 @@ write_with_backup() {
   local tmp="$2"
 
   if [[ -f "$file" ]] && cmp -s "$file" "$tmp"; then
-    echo "[install-linux] unchanged: $file"
+    echo "[install-mac] unchanged: $file"
     rm -f "$tmp"
     return
   fi
@@ -385,10 +611,10 @@ write_with_backup() {
   mkdir -p "$(dirname "$file")"
   if [[ -f "$file" ]]; then
     cp "$file" "$file.local-figma-port.$TIMESTAMP.bak"
-    echo "[install-linux] backup: $file.local-figma-port.$TIMESTAMP.bak"
+    echo "[install-mac] backup: $file.local-figma-port.$TIMESTAMP.bak"
   fi
   mv "$tmp" "$file"
-  echo "[install-linux] wrote: $file"
+  echo "[install-mac] wrote: $file"
 }
 
 upsert_markdown_block() {
@@ -422,8 +648,8 @@ upsert_codex_toml_block() {
   local tmp
 
   if [[ -f "$file" ]] && grep -Fq "[mcp_servers.local-figma-port]" "$file" && ! grep -Fq "$CODEX_TOML_MARKER_START" "$file"; then
-    echo "[install-linux] found an unmanaged [mcp_servers.local-figma-port] block in $file" >&2
-    echo "[install-linux] refusing to overwrite it automatically." >&2
+    echo "[install-mac] found an unmanaged [mcp_servers.local-figma-port] block in $file" >&2
+    echo "[install-mac] refusing to overwrite it automatically." >&2
     exit 1
   fi
 
@@ -453,7 +679,7 @@ upsert_json_mcp_file() {
   local server_json
 
   server_json="$(cat <<EOF
-{"command":"node","args":["$REPO_MCP_ENTRY_POSIX"],"env":{"SQLITE_PATH":"$REPO_SQLITE_POSIX","DATA_DIR":"$REPO_DATA_POSIX"}}
+{"command":"node","args":["$REPO_MCP_ENTRY_POSIX"],"env":{"SQLITE3_BIN":"$REPO_SQLITE3_BIN","SQLITE_PATH":"$REPO_SQLITE_POSIX","DATA_DIR":"$REPO_DATA_POSIX"}}
 EOF
 )"
 
@@ -501,46 +727,56 @@ EOF
 
 print_summary() {
   echo
-  echo "[install-linux] summary"
+  echo "[install-mac] summary"
   [[ "$SELECT_CODEX" -eq 1 ]] && echo "  - Codex"
+  [[ "$SELECT_CODEX_APP" -eq 1 ]] && echo "  - Codex App"
   [[ "$SELECT_CLAUDE" -eq 1 ]] && echo "  - Claude Code"
   [[ "$SELECT_CURSOR" -eq 1 ]] && echo "  - Cursor"
   echo "  - project root: $PROJECT_ROOT"
+  echo "  - config root: $CONFIG_ROOT"
   echo "  - state root: $STATE_ROOT_DIR"
+  [[ "$USE_PREBUILT" -eq 1 ]] && echo "  - mode: prebuilt bundle"
+  [[ "$SELECT_CODEX_APP" -eq 1 ]] && echo "  - codex app data: $CODEX_APP_DATA_DIR"
 }
 
 print_summary
 
 preflight_project_json_configs
+ensure_codex_app_installed
 ensure_sqlite_fts5
 ensure_mcp_runtime
 ensure_importer_runtime
+ensure_figma_plugin_runtime
 seed_state_data_if_needed
 
-if [[ "$SELECT_CODEX" -eq 1 ]]; then
+if [[ "$SELECT_CODEX" -eq 1 || "$SELECT_CODEX_APP" -eq 1 ]]; then
   copy_skill_file "$CODEX_HOME_DIR/skills/local-figma-port"
   upsert_codex_toml_block "$CODEX_HOME_DIR/config.toml" "$(render_codex_toml_block)"
 fi
 
 if [[ "$SELECT_CLAUDE" -eq 1 ]]; then
   copy_skill_file "$CLAUDE_HOME_DIR/skills/local-figma-port"
-  upsert_json_mcp_file "$PROJECT_ROOT/.mcp.json"
-  upsert_markdown_block "$PROJECT_ROOT/CLAUDE.md" "$CLAUDE_MARKER_START" "$CLAUDE_MARKER_END" "$(render_claude_block)"
+  upsert_json_mcp_file "$CONFIG_ROOT/.mcp.json"
+  upsert_markdown_block "$CONFIG_ROOT/CLAUDE.md" "$CLAUDE_MARKER_START" "$CLAUDE_MARKER_END" "$(render_claude_block)"
 fi
 
-if [[ "$SELECT_CODEX" -eq 1 || "$SELECT_CURSOR" -eq 1 ]]; then
-  upsert_markdown_block "$PROJECT_ROOT/AGENTS.md" "$AGENTS_MARKER_START" "$AGENTS_MARKER_END" "$(render_agents_block)"
+if [[ "$SELECT_CODEX" -eq 1 || "$SELECT_CODEX_APP" -eq 1 || "$SELECT_CURSOR" -eq 1 ]]; then
+  upsert_markdown_block "$CONFIG_ROOT/AGENTS.md" "$AGENTS_MARKER_START" "$AGENTS_MARKER_END" "$(render_agents_block)"
 fi
 
 if [[ "$SELECT_CURSOR" -eq 1 ]]; then
-  upsert_json_mcp_file "$PROJECT_ROOT/.cursor/mcp.json"
+  upsert_json_mcp_file "$CONFIG_ROOT/.cursor/mcp.json"
 fi
 
-VERIFY_ARGS=(--project-root "$PROJECT_ROOT" --state-dir "$STATE_ROOT_DIR" --codex-home "$CODEX_HOME_DIR" --claude-home "$CLAUDE_HOME_DIR" --cursor-home "$CURSOR_HOME_DIR")
+VERIFY_ARGS=(--project-root "$PROJECT_ROOT" --config-root "$CONFIG_ROOT" --state-dir "$STATE_ROOT_DIR" --codex-home "$CODEX_HOME_DIR" --claude-home "$CLAUDE_HOME_DIR" --cursor-home "$CURSOR_HOME_DIR")
 [[ "$SELECT_CODEX" -eq 1 ]] && VERIFY_ARGS+=(--codex)
+[[ "$SELECT_CODEX_APP" -eq 1 ]] && VERIFY_ARGS+=(--codex-app --codex-app-data "$CODEX_APP_DATA_DIR" --codex-app-bundle "$CODEX_APP_BUNDLE")
 [[ "$SELECT_CLAUDE" -eq 1 ]] && VERIFY_ARGS+=(--claude-code)
 [[ "$SELECT_CURSOR" -eq 1 ]] && VERIFY_ARGS+=(--cursor)
 
-"$PROJECT_ROOT/scripts/verify-linux.sh" "${VERIFY_ARGS[@]}"
-LOCAL_FIGMA_PORT_STATE_DIR="$STATE_ROOT_DIR" DATA_DIR="$REPO_DATA" SQLITE_PATH="$REPO_SQLITE" "$PROJECT_ROOT/scripts/start_mcp.sh"
-echo "[install-linux] install complete"
+"$PROJECT_ROOT/scripts/verify/macos.sh" "${VERIFY_ARGS[@]}"
+LOCAL_FIGMA_PORT_STATE_DIR="$STATE_ROOT_DIR" DATA_DIR="$REPO_DATA" SQLITE_PATH="$REPO_SQLITE" SQLITE3_BIN="$REPO_SQLITE3_BIN" IMPORTER_EXE="$REPO_IMPORTER_EXE" "$PROJECT_ROOT/scripts/runtime/start.sh"
+if [[ "$SELECT_CODEX_APP" -eq 1 ]]; then
+  restart_codex_app_if_needed
+fi
+echo "[install-mac] install complete"

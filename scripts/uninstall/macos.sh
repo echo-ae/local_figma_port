@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$ROOT_DIR/scripts/lib/local_figma_port_state.sh"
 
 PROJECT_ROOT="$ROOT_DIR"
@@ -23,7 +24,7 @@ EXPLICIT_DATA_MODE=0
 
 usage() {
   cat <<EOF
-usage: ./scripts/uninstall-mac.sh [options]
+usage: ./scripts/uninstall/macos.sh [options]
 
 options:
   --codex                 uninstall from Codex
@@ -483,7 +484,7 @@ print_summary() {
 print_summary
 
 preflight_project_json_configs
-LOCAL_FIGMA_PORT_STATE_DIR="$STATE_ROOT_DIR" "$PROJECT_ROOT/scripts/stop_mcp.sh" || true
+LOCAL_FIGMA_PORT_STATE_DIR="$STATE_ROOT_DIR" "$PROJECT_ROOT/scripts/runtime/stop.sh" || true
 
 KEEP_AGENTS=0
 if [[ "$SELECT_CODEX" -eq 0 ]] && codex_is_configured; then

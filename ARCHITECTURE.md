@@ -318,7 +318,7 @@ When making changes, this is the quickest way to find the right layer:
   - wire it into `src/mcp-stdio.ts`
   - update `schemas/mcp-tools.v1.schema.json`
 - Runtime/install behavior changed:
-  - check `scripts/*` and `scripts/lib/local_figma_port_state.sh`
+  - check `scripts/install/*`, `scripts/runtime/*`, `scripts/verify/*`, `scripts/uninstall/*`, and `scripts/lib/local_figma_port_state.sh`
 
 ## Related Documents
 

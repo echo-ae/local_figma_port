@@ -5,7 +5,8 @@ param(
     [switch]$ClaudeCode,
     [switch]$Cursor,
     [switch]$All,
-    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$ProjectRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
+    [string]$ConfigRoot = "",
     [string]$StateDir = $(if ($env:LOCAL_FIGMA_PORT_STATE_DIR) { $env:LOCAL_FIGMA_PORT_STATE_DIR } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "LocalFigmaPort" } else { Join-Path $env:USERPROFILE "AppData/Local/LocalFigmaPort" }),
     [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE ".codex" }),
     [string]$CodexAppData = $(if ($env:CODEX_APP_DATA_DIR) { $env:CODEX_APP_DATA_DIR } elseif ($env:APPDATA) { Join-Path $env:APPDATA "Codex" } else { Join-Path $env:USERPROFILE "AppData/Roaming/Codex" }),
@@ -14,7 +15,9 @@ param(
     [string]$CursorHome = (Join-Path $env:USERPROFILE ".cursor")
 )
 
-. (Join-Path $PSScriptRoot "lib/ensure-pwsh7.ps1")
+$LibDir = Join-Path (Split-Path -Parent $PSScriptRoot) "lib"
+. (Join-Path $LibDir "ensure-pwsh7.ps1")
+. (Join-Path $LibDir "windows_agent_paths.ps1")
 Restart-InPwsh7IfNeeded -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters -ForwardArgs $MyInvocation.UnboundArguments
 
 $ErrorActionPreference = "Stop"
@@ -142,13 +145,23 @@ if (-not ($Codex -or $CodexApp -or $ClaudeCode -or $Cursor)) {
 }
 
 $ProjectRoot = (Resolve-Path $ProjectRoot).Path
+if ([string]::IsNullOrWhiteSpace($ConfigRoot)) {
+    $ConfigRoot = $ProjectRoot
+} else {
+    $ConfigRoot = [System.IO.Path]::GetFullPath($ConfigRoot)
+}
 $StateDir = [System.IO.Path]::GetFullPath($StateDir)
 $RepoSkill = Join-Path $ProjectRoot "SKILL.md"
 $RepoMcpEntry = Join-Path $ProjectRoot "packages/mcp-server/dist/mcp-stdio.js"
+$RepoMcpHttpEntry = Join-Path $ProjectRoot "packages/mcp-server/dist/index.js"
+$RepoMcpPackageJson = Join-Path $ProjectRoot "packages/mcp-server/package.json"
 $RepoSqliteBin = Join-Path $StateDir "bin/sqlite3.exe"
 $RepoSqlite = Join-Path (Join-Path $StateDir "data") "design_store.sqlite"
 $RepoData = Join-Path $StateDir "data"
 $RepoMcpNodeModules = Join-Path $ProjectRoot "packages/mcp-server/node_modules"
+$RepoImporterExe = Join-Path $ProjectRoot "packages/design-importer/target/release/design-importer.exe"
+$RepoPluginEntry = Join-Path $ProjectRoot "packages/figma-exporter-plugin/dist/main.js"
+$RepoPluginManifest = Join-Path $ProjectRoot "packages/figma-exporter-plugin/manifest.json"
 
 $AgentsMarkerStart = "<!-- FIGMA PORT MANAGED BLOCK START -->"
 $AgentsMarkerEnd = "<!-- FIGMA PORT MANAGED BLOCK END -->"
@@ -163,11 +176,30 @@ if (-not (Test-Path $RepoSkill)) {
 if (-not (Test-Path $RepoMcpEntry)) {
     Fail "built MCP entry exists ($RepoMcpEntry)"
 }
+if (-not (Test-Path $RepoMcpHttpEntry)) {
+    Fail "built MCP HTTP entry exists ($RepoMcpHttpEntry)"
+} elseif (-not ((Get-Content -Raw $RepoMcpHttpEntry).Contains("IMPORTER_EXE"))) {
+    Fail "MCP HTTP entry supports prebuilt importer execution"
+} else {
+    Ok "MCP HTTP entry supports prebuilt importer execution"
+}
+if (-not (Test-Path $RepoMcpPackageJson)) {
+    Fail "MCP package metadata exists ($RepoMcpPackageJson)"
+}
 if (-not (Test-Path $RepoSqliteBin)) {
     Fail "bundled sqlite3.exe exists ($RepoSqliteBin)"
 }
 if (-not (Test-Path $RepoData)) {
     Fail "stable data dir exists ($RepoData)"
+}
+if (-not (Test-Path $RepoImporterExe)) {
+    Fail "importer executable exists ($RepoImporterExe)"
+}
+if (-not (Test-Path $RepoPluginEntry)) {
+    Fail "Figma plugin bundle exists ($RepoPluginEntry)"
+}
+if (-not (Test-Path $RepoPluginManifest)) {
+    Fail "Figma plugin manifest exists ($RepoPluginManifest)"
 }
 if (-not (Test-Path $RepoMcpNodeModules)) {
     Fail "MCP runtime dependencies exist ($RepoMcpNodeModules)"
@@ -176,35 +208,44 @@ Check-SqliteFts5 -Path $RepoSqliteBin -Label "bundled sqlite3.exe supports FTS5"
 
 if ($Codex) {
     Check-CodexSharedConfig -LabelPrefix "Codex"
-    Check-Contains -Path (Join-Path $ProjectRoot "AGENTS.md") -Needle '$Local Figma Port' -Label "AGENTS.md advertises `$Local Figma Port`"
-    Check-Contains -Path (Join-Path $ProjectRoot "AGENTS.md") -Needle $AgentsMarkerStart -Label "AGENTS.md has managed skill block"
-    Check-Contains -Path (Join-Path $ProjectRoot "AGENTS.md") -Needle (To-PosixPath $RepoSkill) -Label "AGENTS.md points at repo skill"
+    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle '$Local Figma Port' -Label "AGENTS.md advertises `$Local Figma Port`"
+    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle $AgentsMarkerStart -Label "AGENTS.md has managed skill block"
+    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle (To-PosixPath $RepoSkill) -Label "AGENTS.md points at repo skill"
 }
 
 if ($CodexApp) {
-    if (-not (Test-Path $CodexAppData) -and -not (Test-Path $CodexAppExe)) {
+    $resolved = Resolve-LfpCodexAppInstallation -CodexAppData $CodexAppData -CodexAppExe $CodexAppExe
+    if (-not [string]::IsNullOrWhiteSpace($resolved.DataDir)) {
+        $CodexAppData = $resolved.DataDir
+    }
+    if (-not [string]::IsNullOrWhiteSpace($resolved.ExePath)) {
+        $CodexAppExe = $resolved.ExePath
+    }
+
+    if (-not $resolved.IsInstalled) {
         Fail "Codex App installation detected (checked $CodexAppData and $CodexAppExe)"
     } else {
         Ok "Codex App installation detected"
     }
     Check-CodexSharedConfig -LabelPrefix "Codex App"
-    Check-Contains -Path (Join-Path $ProjectRoot "AGENTS.md") -Needle '$Local Figma Port' -Label "Codex App alias is exposed through AGENTS.md"
-    Check-Contains -Path (Join-Path $ProjectRoot "AGENTS.md") -Needle $AgentsMarkerStart -Label "Codex App AGENTS.md has managed skill block"
-    Check-Contains -Path (Join-Path $ProjectRoot "AGENTS.md") -Needle (To-PosixPath $RepoSkill) -Label "Codex App AGENTS.md points at repo skill"
+    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle '$Local Figma Port' -Label "Codex App alias is exposed through AGENTS.md"
+    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle $AgentsMarkerStart -Label "Codex App AGENTS.md has managed skill block"
+    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle (To-PosixPath $RepoSkill) -Label "Codex App AGENTS.md points at repo skill"
 }
 
 if ($ClaudeCode) {
     Check-Contains -Path (Join-Path $ClaudeHome "skills/local-figma-port/SKILL.md") -Needle "name: local-figma-port" -Label "Claude Code skill installed"
-    Check-JsonServer -Path (Join-Path $ProjectRoot ".mcp.json") -RepoMcpEntry $RepoMcpEntry -RepoSqliteBin $RepoSqliteBin -RepoSqlite $RepoSqlite -RepoData $RepoData -Label "Claude project MCP config points at repo build"
-    Check-Contains -Path (Join-Path $ProjectRoot "CLAUDE.md") -Needle $ClaudeMarkerStart -Label "CLAUDE.md has managed skill block"
-    Check-Contains -Path (Join-Path $ProjectRoot "CLAUDE.md") -Needle '$Local Figma Port' -Label "CLAUDE.md advertises `$Local Figma Port`"
-    Check-Contains -Path (Join-Path $ProjectRoot "CLAUDE.md") -Needle (To-PosixPath $RepoSkill) -Label "CLAUDE.md points at repo skill"
+    Check-JsonServer -Path (Join-Path $ConfigRoot ".mcp.json") -RepoMcpEntry $RepoMcpEntry -RepoSqliteBin $RepoSqliteBin -RepoSqlite $RepoSqlite -RepoData $RepoData -Label "Claude project MCP config points at repo build"
+    Check-Contains -Path (Join-Path $ConfigRoot "CLAUDE.md") -Needle $ClaudeMarkerStart -Label "CLAUDE.md has managed skill block"
+    Check-Contains -Path (Join-Path $ConfigRoot "CLAUDE.md") -Needle '$Local Figma Port' -Label "CLAUDE.md advertises `$Local Figma Port`"
+    Check-Contains -Path (Join-Path $ConfigRoot "CLAUDE.md") -Needle (To-PosixPath $RepoSkill) -Label "CLAUDE.md points at repo skill"
 }
 
 if ($Cursor) {
-    Check-JsonServer -Path (Join-Path $ProjectRoot ".cursor/mcp.json") -RepoMcpEntry $RepoMcpEntry -RepoSqliteBin $RepoSqliteBin -RepoSqlite $RepoSqlite -RepoData $RepoData -Label "Cursor project MCP config points at repo build"
-    Check-Contains -Path (Join-Path $ProjectRoot "AGENTS.md") -Needle '$Local Figma Port' -Label "Cursor alias is exposed through AGENTS.md"
-    Check-Contains -Path (Join-Path $ProjectRoot "AGENTS.md") -Needle $AgentsMarkerEnd -Label "AGENTS.md managed block is complete"
+    Check-JsonServer -Path (Join-Path $ConfigRoot ".cursor/mcp.json") -RepoMcpEntry $RepoMcpEntry -RepoSqliteBin $RepoSqliteBin -RepoSqlite $RepoSqlite -RepoData $RepoData -Label "Cursor project MCP config points at repo build"
+    Check-JsonServer -Path (Join-Path $CursorHome "mcp.json") -RepoMcpEntry $RepoMcpEntry -RepoSqliteBin $RepoSqliteBin -RepoSqlite $RepoSqlite -RepoData $RepoData -Label "Cursor global MCP config points at repo build"
+    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle '$Local Figma Port' -Label "Cursor alias is exposed through AGENTS.md"
+    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle $AgentsMarkerEnd -Label "AGENTS.md managed block is complete"
 }
 
 if ($script:Failures -gt 0) {

@@ -5,8 +5,10 @@ param(
     [switch]$ClaudeCode,
     [switch]$Cursor,
     [switch]$All,
+    [switch]$UsePrebuilt,
     [string]$Targets,
-    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$ProjectRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
+    [string]$ConfigRoot = "",
     [string]$StateDir = $(if ($env:LOCAL_FIGMA_PORT_STATE_DIR) { $env:LOCAL_FIGMA_PORT_STATE_DIR } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "LocalFigmaPort" } else { Join-Path $env:USERPROFILE "AppData/Local/LocalFigmaPort" }),
     [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE ".codex" }),
     [string]$CodexAppData = $(if ($env:CODEX_APP_DATA_DIR) { $env:CODEX_APP_DATA_DIR } elseif ($env:APPDATA) { Join-Path $env:APPDATA "Codex" } else { Join-Path $env:USERPROFILE "AppData/Roaming/Codex" }),
@@ -15,16 +17,31 @@ param(
     [string]$CursorHome = (Join-Path $env:USERPROFILE ".cursor")
 )
 
-. (Join-Path $PSScriptRoot "lib/ensure-pwsh7.ps1")
+$LibDir = Join-Path (Split-Path -Parent $PSScriptRoot) "lib"
+. (Join-Path $LibDir "ensure-pwsh7.ps1")
+. (Join-Path $LibDir "windows_agent_paths.ps1")
 Restart-InPwsh7IfNeeded -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters -ForwardArgs $MyInvocation.UnboundArguments
 
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = (Resolve-Path $ProjectRoot).Path
+if ([string]::IsNullOrWhiteSpace($ConfigRoot)) {
+    $ConfigRoot = $ProjectRoot
+} else {
+    New-Item -ItemType Directory -Force -Path $ConfigRoot | Out-Null
+    $ConfigRoot = (Resolve-Path $ConfigRoot).Path
+}
 $StateDir = [System.IO.Path]::GetFullPath($StateDir)
 $RepoSkill = Join-Path $ProjectRoot "SKILL.md"
 $RepoMcpDir = Join-Path $ProjectRoot "packages/mcp-server"
+$RepoMcpPackageJson = Join-Path $RepoMcpDir "package.json"
 $RepoMcpEntry = Join-Path $ProjectRoot "packages/mcp-server/dist/mcp-stdio.js"
+$RepoMcpHttpEntry = Join-Path $ProjectRoot "packages/mcp-server/dist/index.js"
+$RepoImporterExe = Join-Path $ProjectRoot "packages/design-importer/target/release/design-importer.exe"
+$RepoPluginDir = Join-Path $ProjectRoot "packages/figma-exporter-plugin"
+$RepoPluginEntry = Join-Path $RepoPluginDir "dist/main.js"
+$RepoPluginManifest = Join-Path $RepoPluginDir "manifest.json"
+$RepoPluginPackageJson = Join-Path $RepoPluginDir "package.json"
 $RepoSqliteBinDir = Join-Path $StateDir "bin"
 $RepoSqliteBin = Join-Path $RepoSqliteBinDir "sqlite3.exe"
 $RepoSqliteArchiveDir = Join-Path $StateDir "downloads"
@@ -53,7 +70,7 @@ $CodexTomlMarkerEnd = "# <<< FIGMA PORT MCP END <<<"
 
 function Show-Usage {
     @"
-usage: .\scripts\install-windows.ps1 [-Codex] [-ClaudeCode] [-Cursor] [-All]
+usage: .\scripts\install\windows.ps1 [-Codex] [-ClaudeCode] [-Cursor] [-All]
 
 options:
   -Codex                 install for Codex
@@ -61,8 +78,10 @@ options:
   -ClaudeCode            install for Claude Code
   -Cursor                install for Cursor
   -All                   install for all supported targets
+  -UsePrebuilt           install from a prebuilt runtime bundle without local Rust/TypeScript builds
   -Targets LIST          install for comma-separated target numbers: 1=Codex, 2=Codex App, 3=Claude Code, 4=Cursor
   -ProjectRoot PATH      override repository root
+  -ConfigRoot PATH       override workspace root for project-local config files (.mcp.json, .cursor/mcp.json, CLAUDE.md, AGENTS.md)
   -StateDir PATH         override Local Figma Port state root
   -CodexHome PATH        override Codex home
   -CodexAppData PATH     override Codex App data dir
@@ -284,6 +303,37 @@ function Test-JsonFileIfPresent {
     }
 }
 
+function Test-McpRuntimeDependenciesInstalled {
+    $ajvDir = Join-Path $RepoMcpDir "node_modules/ajv"
+    $pngjsDir = Join-Path $RepoMcpDir "node_modules/pngjs"
+    return (Test-Path $ajvDir) -and (Test-Path $pngjsDir)
+}
+
+function Ensure-PrebuiltBundleSupportFiles {
+    if (-not (Test-Path $RepoMcpEntry -PathType Leaf)) {
+        throw "Missing prebuilt MCP stdio entry: $RepoMcpEntry"
+    }
+    if (-not (Test-Path $RepoMcpHttpEntry -PathType Leaf)) {
+        throw "Missing prebuilt MCP HTTP entry: $RepoMcpHttpEntry"
+    }
+    if (-not (Test-Path $RepoMcpPackageJson -PathType Leaf)) {
+        throw "Missing prebuilt MCP package metadata: $RepoMcpPackageJson"
+    }
+    if (-not (Test-Path $RepoImporterExe -PathType Leaf)) {
+        throw "Missing prebuilt importer executable: $RepoImporterExe"
+    }
+    if (-not (Test-Path $RepoPluginEntry -PathType Leaf)) {
+        throw "Missing prebuilt Figma plugin bundle: $RepoPluginEntry"
+    }
+    if (-not (Test-Path $RepoPluginManifest -PathType Leaf)) {
+        throw "Missing prebuilt Figma plugin manifest: $RepoPluginManifest"
+    }
+    $httpEntryText = Get-Content -Raw $RepoMcpHttpEntry
+    if (-not $httpEntryText.Contains("IMPORTER_EXE")) {
+        throw "The prebuilt MCP HTTP entry at $RepoMcpHttpEntry does not support prebuilt importer execution yet. Rebuild the Windows release bundle from the updated repository before publishing it."
+    }
+}
+
 function Write-WithBackup {
     param(
         [string]$Path,
@@ -402,12 +452,36 @@ function Ensure-McpRuntime {
     Require-Command -Name "node"
     Require-Command -Name "npm"
 
+    if ($UsePrebuilt) {
+        Ensure-PrebuiltBundleSupportFiles
+        Write-Host "[install-windows] preparing MCP runtime dependencies in $RepoMcpDir"
+        Push-Location $RepoMcpDir
+        try {
+            if (Test-McpRuntimeDependenciesInstalled) {
+                Write-Host "[install-windows] reusing existing node_modules in $RepoMcpDir"
+            } else {
+                & npm install --omit=dev --no-package-lock
+                if ($LASTEXITCODE -ne 0) {
+                    throw "npm install failed in $RepoMcpDir"
+                }
+            }
+        } finally {
+            Pop-Location
+        }
+
+        return
+    }
+
     Write-Host "[install-windows] bootstrapping MCP runtime in $RepoMcpDir"
     Push-Location $RepoMcpDir
     try {
-        & npm install --no-package-lock
-        if ($LASTEXITCODE -ne 0) {
-            throw "npm install failed in $RepoMcpDir"
+        if (Test-Path (Join-Path $RepoMcpDir "node_modules")) {
+            Write-Host "[install-windows] reusing existing node_modules in $RepoMcpDir"
+        } else {
+            & npm install --no-package-lock
+            if ($LASTEXITCODE -ne 0) {
+                throw "npm install failed in $RepoMcpDir"
+            }
         }
         & npm run build | Out-Null
         if ($LASTEXITCODE -ne 0) {
@@ -423,6 +497,12 @@ function Ensure-McpRuntime {
 }
 
 function Ensure-ImporterRuntime {
+    if ($UsePrebuilt) {
+        Ensure-PrebuiltBundleSupportFiles
+        Write-Host "[install-windows] using prebuilt importer runtime at $RepoImporterExe"
+        return
+    }
+
     $importerManifest = Join-Path $ProjectRoot "packages/design-importer/Cargo.toml"
 
     Require-Command -Name "cargo"
@@ -440,12 +520,65 @@ function Ensure-ImporterRuntime {
     }
 }
 
+function Ensure-FigmaPluginRuntime {
+    Require-Command -Name "npm"
+
+    if ($UsePrebuilt) {
+        Ensure-PrebuiltBundleSupportFiles
+        Write-Host "[install-windows] using prebuilt Figma plugin bundle at $RepoPluginEntry"
+        return
+    }
+
+    if (-not (Test-Path $RepoPluginPackageJson -PathType Leaf)) {
+        throw "Missing Figma plugin package: $RepoPluginPackageJson"
+    }
+
+    Write-Host "[install-windows] bootstrapping Figma plugin runtime in $RepoPluginDir"
+    Push-Location $RepoPluginDir
+    try {
+        if (Test-Path (Join-Path $RepoPluginDir "node_modules")) {
+            Write-Host "[install-windows] reusing existing node_modules in $RepoPluginDir"
+        } else {
+            & npm install --no-package-lock
+            if ($LASTEXITCODE -ne 0) {
+                throw "npm install failed in $RepoPluginDir"
+            }
+        }
+        & npm run build | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "npm run build failed in $RepoPluginDir"
+        }
+    } finally {
+        Pop-Location
+    }
+
+    if (-not (Test-Path $RepoPluginEntry -PathType Leaf)) {
+        throw "Figma plugin build did not produce $RepoPluginEntry"
+    }
+}
+
+function Show-FigmaPluginManifestInstructions {
+    $border = "=" * 78
+    Write-Host ""
+    Write-Host $border -ForegroundColor Cyan
+    Write-Host "  Figma Desktop plugin manifest" -ForegroundColor Cyan
+    Write-Host $border -ForegroundColor Cyan
+    Write-Host "  Import this file in Figma Desktop:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  $RepoPluginManifest" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Figma: Plugins -> Development -> Import plugin from manifest..." -ForegroundColor White
+    Write-Host $border -ForegroundColor Cyan
+    Write-Host ""
+}
+
 function Test-ProjectJsonConfigs {
     if ($ClaudeCode) {
-        Test-JsonFileIfPresent -Path (Join-Path $ProjectRoot ".mcp.json") -Label "Claude project MCP config"
+        Test-JsonFileIfPresent -Path (Join-Path $ConfigRoot ".mcp.json") -Label "Claude project MCP config"
     }
     if ($Cursor) {
-        Test-JsonFileIfPresent -Path (Join-Path $ProjectRoot ".cursor/mcp.json") -Label "Cursor project MCP config"
+        Test-JsonFileIfPresent -Path (Join-Path $ConfigRoot ".cursor/mcp.json") -Label "Cursor project MCP config"
+        Test-JsonFileIfPresent -Path (Join-Path $CursorHome "mcp.json") -Label "Cursor global MCP config"
     }
 }
 
@@ -454,8 +587,23 @@ function Ensure-CodexAppInstalled {
         return
     }
 
-    if (-not (Test-Path $CodexAppData) -and -not (Test-Path $CodexAppExe)) {
-        throw "Codex App target selected, but no app data dir or executable was found. Checked: $CodexAppData and $CodexAppExe"
+    $resolved = Resolve-LfpCodexAppInstallation -CodexAppData $CodexAppData -CodexAppExe $CodexAppExe
+    if (-not [string]::IsNullOrWhiteSpace($resolved.DataDir)) {
+        $script:CodexAppData = $resolved.DataDir
+    }
+    if (-not [string]::IsNullOrWhiteSpace($resolved.ExePath)) {
+        $script:CodexAppExe = $resolved.ExePath
+    }
+
+    if (-not $resolved.IsInstalled) {
+        $candidateLines = @()
+        foreach ($candidate in $resolved.CandidateDataDirs) {
+            $candidateLines += "data: $candidate"
+        }
+        foreach ($candidate in $resolved.CandidateExePaths) {
+            $candidateLines += "exe:  $candidate"
+        }
+        throw "Codex App target selected, but no app data dir or executable was found.`nChecked:`n$($candidateLines -join "`n")"
     }
 }
 
@@ -494,29 +642,29 @@ interface:
 }
 
 function Render-AgentsBlock {
-    return @"
+    return @'
 ## Local Figma Port
 
 ### Available skills
-- Local Figma Port: Use when implementing UI from this repository's `local-figma-port` MCP server where nested descendants, partial node reads, or ambiguous style ownership could cause the agent to stop early and guess instead of fully tracing the design source. (file: $(To-PosixPath $RepoSkill))
+- Local Figma Port: Use when implementing UI from this repository's `local-figma-port` MCP server where nested descendants, partial node reads, or ambiguous style ownership could cause the agent to stop early and guess instead of fully tracing the design source. (file: {0})
 
 ### How to use skills
-- If the user names this skill with ``$Local Figma Port`` or plain text `Local Figma Port`, you must use it for that turn.
+- If the user names this skill with `$Local Figma Port` or plain text `Local Figma Port`, you must use it for that turn.
 - Read the skill file above and follow it directly.
 - Treat `Local Figma Port` as the canonical human-facing alias for this repository skill.
-"@
+'@ -f (To-PosixPath $RepoSkill)
 }
 
 function Render-ClaudeBlock {
-    return @"
+    return @'
 ## Local Figma Port
 
-When the user mentions ``$Local Figma Port`` or `Local Figma Port`, use the skill at `$(To-PosixPath $RepoSkill)`.
+When the user mentions `$Local Figma Port` or `Local Figma Port`, use the skill at `{0}`.
 
 Use this skill for:
 - exact implementation from this repository's `local-figma-port` MCP server;
 - setup or troubleshooting of the Local Figma Port workflow itself.
-"@
+'@ -f (To-PosixPath $RepoSkill)
 }
 
 function Render-CodexTomlBlock {
@@ -577,8 +725,12 @@ if (-not (Test-Path $RepoSkill)) {
 }
 Test-SkillFrontmatter -Path $RepoSkill
 
-if (-not (Test-Path (Join-Path $RepoMcpDir "package.json"))) {
-    throw "Missing MCP package: $(Join-Path $RepoMcpDir 'package.json')"
+if ($UsePrebuilt) {
+    Ensure-PrebuiltBundleSupportFiles
+}
+
+if (-not (Test-Path $RepoMcpPackageJson)) {
+    throw "Missing MCP package: $RepoMcpPackageJson"
 }
 
 Write-Host ""
@@ -588,6 +740,9 @@ if ($CodexApp) { Write-Host "  - Codex App" }
 if ($ClaudeCode) { Write-Host "  - Claude Code" }
 if ($Cursor) { Write-Host "  - Cursor" }
 Write-Host "  - project root: $ProjectRoot"
+if ($ConfigRoot -ne $ProjectRoot) {
+    Write-Host "  - config root: $ConfigRoot"
+}
 Write-Host "  - state root: $StateDir"
 Write-Host "  - sqlite version: $RepoSqliteVersion"
 Write-Host "  - sqlite target: $RepoSqliteBin"
@@ -598,6 +753,7 @@ Ensure-CodexAppInstalled
 Ensure-SqliteRuntime
 Ensure-McpRuntime
 Ensure-ImporterRuntime
+Ensure-FigmaPluginRuntime
 Seed-StateDataIfNeeded
 
 if ($Codex -or $CodexApp) {
@@ -607,39 +763,40 @@ if ($Codex -or $CodexApp) {
 
 if ($ClaudeCode) {
     Copy-SkillFile -TargetDir (Join-Path $ClaudeHome "skills/local-figma-port")
-    Set-JsonMcpFile -Path (Join-Path $ProjectRoot ".mcp.json")
-    Set-MarkdownManagedBlock -Path (Join-Path $ProjectRoot "CLAUDE.md") -StartMarker $ClaudeMarkerStart -EndMarker $ClaudeMarkerEnd -Block (Render-ClaudeBlock)
+    Set-JsonMcpFile -Path (Join-Path $ConfigRoot ".mcp.json")
+    Set-MarkdownManagedBlock -Path (Join-Path $ConfigRoot "CLAUDE.md") -StartMarker $ClaudeMarkerStart -EndMarker $ClaudeMarkerEnd -Block (Render-ClaudeBlock)
 }
 
 if ($Codex -or $CodexApp -or $Cursor) {
-    Set-MarkdownManagedBlock -Path (Join-Path $ProjectRoot "AGENTS.md") -StartMarker $AgentsMarkerStart -EndMarker $AgentsMarkerEnd -Block (Render-AgentsBlock)
+    Set-MarkdownManagedBlock -Path (Join-Path $ConfigRoot "AGENTS.md") -StartMarker $AgentsMarkerStart -EndMarker $AgentsMarkerEnd -Block (Render-AgentsBlock)
 }
 
 if ($Cursor) {
-    Set-JsonMcpFile -Path (Join-Path $ProjectRoot ".cursor/mcp.json")
+    Set-JsonMcpFile -Path (Join-Path $ConfigRoot ".cursor/mcp.json")
+    Set-JsonMcpFile -Path (Join-Path $CursorHome "mcp.json")
 }
 
-$verifyArgs = @(
-    "-ProjectRoot", $ProjectRoot,
-    "-StateDir", $StateDir,
-    "-CodexHome", $CodexHome,
-    "-ClaudeHome", $ClaudeHome,
-    "-CursorHome", $CursorHome
-)
-if ($Codex) { $verifyArgs += "-Codex" }
+$verifyParams = @{
+    ProjectRoot = $ProjectRoot
+    ConfigRoot = $ConfigRoot
+    StateDir = $StateDir
+    CodexHome = $CodexHome
+    ClaudeHome = $ClaudeHome
+    CursorHome = $CursorHome
+}
+if ($Codex) { $verifyParams.Codex = $true }
 if ($CodexApp) {
-    $verifyArgs += "-CodexApp"
-    $verifyArgs += "-CodexAppData"
-    $verifyArgs += $CodexAppData
-    $verifyArgs += "-CodexAppExe"
-    $verifyArgs += $CodexAppExe
+    $verifyParams.CodexApp = $true
+    $verifyParams.CodexAppData = $CodexAppData
+    $verifyParams.CodexAppExe = $CodexAppExe
 }
-if ($ClaudeCode) { $verifyArgs += "-ClaudeCode" }
-if ($Cursor) { $verifyArgs += "-Cursor" }
+if ($ClaudeCode) { $verifyParams.ClaudeCode = $true }
+if ($Cursor) { $verifyParams.Cursor = $true }
 
-& (Join-Path $ProjectRoot "scripts/verify-windows.ps1") @verifyArgs
-& (Join-Path $ProjectRoot "scripts/start_mcp.ps1") -ProjectRoot $ProjectRoot -StateDir $StateDir -DataDir $RepoData -SqlitePath $RepoSqlite -McpPort $(if ($env:MCP_PORT) { [int]$env:MCP_PORT } else { 7331 })
+& (Join-Path $ProjectRoot "scripts/verify/windows.ps1") @verifyParams
+& (Join-Path $ProjectRoot "scripts/runtime/start.ps1") -ProjectRoot $ProjectRoot -StateDir $StateDir -DataDir $RepoData -SqlitePath $RepoSqlite -ImporterExe $RepoImporterExe -McpPort $(if ($env:MCP_PORT) { [int]$env:MCP_PORT } else { 7331 })
 if ($CodexApp) {
     Write-Host "[install-windows] note: Codex App reads ~/.codex/config.toml; restart the app if it was already open."
 }
+Show-FigmaPluginManifestInstructions
 Write-Host "[install-windows] install complete"

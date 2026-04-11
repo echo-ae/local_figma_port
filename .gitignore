@@ -23,6 +23,7 @@
 /imports/**
 /import-ui-kit/**
 /data/
+/out/
 /.pnpm-store/
 
 # Build / dependencies

@@ -27,6 +27,14 @@ const CHUNKS_DIR = process.env.CHUNKS_DIR ?? path.join(DATA_DIR, "chunks");
 const SQLITE_PATH = process.env.SQLITE_PATH ?? path.join(DATA_DIR, "design_store.sqlite");
 const DDL_PATH = process.env.DDL_PATH ?? path.join(ROOT_DIR, "sql", "design_store.v1.sql");
 const IMPORTER_MANIFEST = process.env.IMPORTER_MANIFEST ?? path.join(ROOT_DIR, "packages", "design-importer", "Cargo.toml");
+const IMPORTER_EXE = process.env.IMPORTER_EXE ?? path.join(
+  ROOT_DIR,
+  "packages",
+  "design-importer",
+  "target",
+  "release",
+  process.platform === "win32" ? "design-importer.exe" : "design-importer",
+);
 const IMPORT_INCREMENTAL = process.env.IMPORT_INCREMENTAL ?? "false";
 let importInProgress = false;
 
@@ -133,34 +141,37 @@ function asBundlePayload(body: unknown): { mode: "design" | "uikit"; payload: Bu
 function runImporter(): { success: boolean; stderr?: string } {
   try {
     fs.mkdirSync(CHUNKS_DIR, { recursive: true });
-    execFileSync(
-      "cargo",
-      [
-        "run",
-        "--manifest-path",
-        IMPORTER_MANIFEST,
-        "--",
-        "import",
-        "--input",
-        IMPORTS_DIR,
-        "--ui-kit-input",
-        UIKIT_IMPORTS_DIR,
-        "--sqlite",
-        SQLITE_PATH,
-        "--ddl",
-        DDL_PATH,
-        "--write-chunks",
-        CHUNKS_DIR,
-        "--incremental",
-        IMPORT_INCREMENTAL,
-        "--recompute-spacing",
-        "true",
-      ],
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
+    const importerArgs = [
+      "import",
+      "--input",
+      IMPORTS_DIR,
+      "--ui-kit-input",
+      UIKIT_IMPORTS_DIR,
+      "--sqlite",
+      SQLITE_PATH,
+      "--ddl",
+      DDL_PATH,
+      "--write-chunks",
+      CHUNKS_DIR,
+      "--incremental",
+      IMPORT_INCREMENTAL,
+      "--recompute-spacing",
+      "true",
+    ];
+    const command = fs.existsSync(IMPORTER_EXE) ? IMPORTER_EXE : "cargo";
+    const args = fs.existsSync(IMPORTER_EXE)
+      ? importerArgs
+      : [
+          "run",
+          "--manifest-path",
+          IMPORTER_MANIFEST,
+          "--",
+          ...importerArgs,
+        ];
+    execFileSync(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     return { success: true };
   } catch (e) {
     const err = e as { message?: string; stderr?: string | Buffer };

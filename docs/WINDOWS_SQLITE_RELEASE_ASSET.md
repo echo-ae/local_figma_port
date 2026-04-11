@@ -28,11 +28,11 @@ Default resolution:
 2. Upload that exact zip file to the GitHub release as `sqlite-tools-win-x64-3510300.zip`.
 3. Publish the release.
 4. Run a clean Windows install and verify that the installer fetches the asset from `releases/latest/download/...`.
-5. Run `scripts/verify-windows.ps1` on that machine.
+5. Run `scripts/verify/windows.ps1` on that machine.
 
 If the pinned SQLite version changes later:
 
-1. Update the asset filename and version constants in [install-windows.ps1](/Users/alex/Documents/src/figma_port/scripts/install-windows.ps1).
+1. Update the asset filename and version constants in [scripts/install/windows.ps1](/Users/alex/Documents/src/figma_port/scripts/install/windows.ps1).
 2. Update this document and the Windows section in [README.md](/Users/alex/Documents/src/figma_port/README.md).
 3. Attach the new zip to the release before asking users to install it.
 

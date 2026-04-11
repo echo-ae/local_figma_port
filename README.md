@@ -150,44 +150,86 @@ Instead of asking an agent to reason over an entire design system, you give it e
 
 ### Requirements
 
-- Node.js LTS
-- Rust toolchain and Cargo
 - Figma Desktop
+- Node.js LTS
 - On macOS and Linux: `sqlite3` must be installed with `FTS5` enabled
-- On Windows: Visual Studio Build Tools (or Visual Studio) with C++ build tools
-- On Windows: no separate SQLite install is required; the installer downloads a known SQLite CLI build with FTS5
+
+On Windows, the release bootstrap installer can install Node.js automatically
+if it is missing, and the Windows bundle ships its own `sqlite3.exe`.
+On macOS, the release bootstrap installer can install Node.js and a Homebrew
+`sqlite3` build with `FTS5` enabled if they are missing.
 
 ### Quick Start By Platform
 
-| Platform | Install | Uninstall | Notes |
-| --- | --- | --- | --- |
-| macOS | `./scripts/install-mac.sh` | `./scripts/uninstall-mac.sh` | Native installer for Codex, Codex App, Claude Code, and Cursor |
-| Windows | `pwsh -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1` | `pwsh -ExecutionPolicy Bypass -File .\scripts\uninstall-windows.ps1` | Native installer for the same targets |
-| Linux | `./scripts/install-linux.sh` | `./scripts/uninstall-linux.sh` | Native bash installer for Codex, Claude Code, and Cursor |
+#### macOS
+
+Install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/echo-ae/local_figma_port/main/mac-install.sh | bash
+```
+
+Uninstall:
+
+```bash
+~/Library/Application\ Support/LocalFigmaPort/bundle/current/scripts/uninstall/macos.sh
+```
+
+Uses the release bootstrap installer and downloads the matching prebuilt bundle.
+
+#### Windows
+
+Install:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/echo-ae/local_figma_port/main/windows-install.ps1 | iex"
+```
+
+Uninstall:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\LocalFigmaPort\bundle\current\scripts\uninstall\windows.ps1"
+```
+
+Uses the release bootstrap installer and downloads the matching prebuilt bundle.
+
+#### Linux
+
+Install:
+
+```bash
+./scripts/install/linux.sh
+```
+
+Uninstall:
+
+```bash
+./scripts/uninstall/linux.sh
+```
+
+Uses the native bash installer for Codex, Claude Code, and Cursor.
 
 ### macOS
 
-Install for one or more targets:
+Recommended install from the latest GitHub release:
 
 ```bash
-./scripts/install-mac.sh
+curl -fsSL https://raw.githubusercontent.com/echo-ae/local_figma_port/main/mac-install.sh | bash
 ```
 
-Supported target numbers:
+The bootstrap script:
 
-- `1` = Codex
-- `2` = Codex App
-- `3` = Claude Code
-- `4` = Cursor
+- detects `arm64` vs `x64`
+- downloads the matching prebuilt macOS bundle from GitHub Releases
+- installs Node.js and a Homebrew `sqlite3` build with `FTS5` support if they are missing
+- asks which coding agent to configure and applies the install for that target
+- writes project-local config into the current working directory when you choose `Claude Code` or `Cursor`
 
-The installer:
+If you are installing for `Claude Code` or `Cursor`, run the command from the
+workspace root you want to configure.
 
-- installs local runtime dependencies
-- validates and builds the importer/server toolchain
-- validates that the system `sqlite3` CLI supports `FTS5`
-- installs or syncs the Local Figma Port skill where needed
-- updates local MCP configuration
-- uses a stable per-user state directory instead of repository-local runtime state
+If you are building from a checked-out repository instead of using a release
+bundle, see [Build](#build).
 
 Default state root on macOS:
 
@@ -197,38 +239,25 @@ Default state root on macOS:
 
 ### Windows
 
-Install for one or more targets:
+Recommended install from the latest GitHub release:
 
 ```powershell
-pwsh -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/echo-ae/local_figma_port/main/windows-install.ps1 | iex"
 ```
 
-If a user launches the script from Windows PowerShell 5, the script now tries to
-re-start itself under PowerShell 7 automatically and shows a clear message if
-`pwsh` is not installed.
+The bootstrap script:
 
-The Windows installer builds the Rust importer locally. If `link.exe` is missing,
-install Visual Studio Build Tools with the C++ workload and re-run the installer.
+- detects `amd64` vs `arm64`
+- downloads the matching prebuilt Windows bundle from GitHub Releases
+- installs PowerShell 7 and Node.js LTS if they are missing
+- asks which coding agent to configure and applies the install for that target
+- writes project-local config into the current working directory when you choose `Claude Code` or `Cursor`
 
-It also prepares `sqlite3.exe` in the Local Figma Port state directory and points
-the MCP server at that exact binary, so Windows users do not need a separate
-SQLite install on `PATH`.
+If you are installing for `Claude Code` or `Cursor`, run the command from the
+workspace root you want to configure.
 
-The installer first tries the matching GitHub Release asset for this project and
-falls back to the official SQLite upstream tools archive if that asset is not
-yet present. The downloaded binary is then checked for `FTS5` support before it
-is used.
-
-By default, the installer looks for that asset on the project's `latest`
-GitHub release. You can override that with `LOCAL_FIGMA_PORT_RELEASE_TAG` or
-provide a direct archive URL with `LOCAL_FIGMA_PORT_SQLITE_ZIP_URL`.
-
-The current pinned Windows bundle is SQLite `3.51.3` (`sqlite-tools-win-x64-3510300.zip`).
-The official SQLite download page currently ships Windows command-line tools for
-x64. On Windows ARM64, that binary runs through x64 emulation.
-
-Release maintainers can use the short runbook in
-[WINDOWS_SQLITE_RELEASE_ASSET.md](/Users/alex/Documents/src/figma_port/docs/WINDOWS_SQLITE_RELEASE_ASSET.md).
+If you are building from a checked-out repository instead of using a release
+bundle, see [Build](#build).
 
 Default state root on Windows:
 
@@ -241,7 +270,7 @@ $env:LOCALAPPDATA\LocalFigmaPort
 Install for one or more targets:
 
 ```bash
-./scripts/install-linux.sh
+./scripts/install/linux.sh
 ```
 
 Supported target numbers:
@@ -259,6 +288,84 @@ Default state root on Linux:
 ~/.local/share/local-figma-port
 ```
 
+## Build
+
+Source builds and checked-out repository installs need the full local toolchain.
+
+### Build Requirements
+
+- Runtime requirements above
+- Rust toolchain and Cargo
+- On Windows: Visual Studio Build Tools (or Visual Studio) with C++ build tools
+
+### Source Install By Platform
+
+macOS:
+
+```bash
+./scripts/install/macos.sh
+```
+
+Windows:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File .\scripts\install\windows.ps1
+```
+
+Linux:
+
+```bash
+./scripts/install/linux.sh
+```
+
+### Windows Build Notes
+
+The source Windows installer builds the Rust importer locally. If `link.exe` is
+missing, install Visual Studio Build Tools with the C++ workload and re-run the
+installer from a new PowerShell session.
+
+The installer prepares `sqlite3.exe` in the Local Figma Port state directory
+and points the MCP server at that exact binary, so Windows users do not need a
+separate SQLite install on `PATH`.
+
+By default, the installer first looks for the pinned SQLite archive on the
+project's latest GitHub release and falls back to the official upstream SQLite
+tools archive if needed. You can override that with
+`LOCAL_FIGMA_PORT_RELEASE_TAG` or `LOCAL_FIGMA_PORT_SQLITE_ZIP_URL`.
+
+The current pinned Windows bundle is SQLite `3.51.3`
+(`sqlite-tools-win-x64-3510300.zip`). The official SQLite download page
+currently ships Windows command-line tools for x64. On Windows ARM64, that
+binary runs through x64 emulation.
+
+Release maintainers can use the short runbook in
+[WINDOWS_SQLITE_RELEASE_ASSET.md](/Users/alex/Documents/src/figma_port/docs/WINDOWS_SQLITE_RELEASE_ASSET.md).
+
+### macOS Build Notes
+
+The source macOS installer builds the Rust importer locally, so `rustc` and
+`cargo` are only required for checked-out repository installs.
+
+The release bootstrap installer downloads a prebuilt importer bundle and does
+not require Rust.
+
+Release maintainers can build macOS release ZIPs with:
+
+```bash
+./scripts/release/package-macos.sh --target all --build
+```
+
+On Apple Silicon, add the x64 Rust target first if you have not installed it yet:
+
+```bash
+rustup target add x86_64-apple-darwin
+```
+
+That produces:
+
+- `out/release/macos/local-figma-port-macos-arm64.zip`
+- `out/release/macos/local-figma-port-macos-x64.zip`
+
 ## Start And Stop The Local MCP Server
 
 > Important: the local MCP server must be started manually before exporting from Figma or asking an agent to use Local Figma Port.
@@ -270,13 +377,13 @@ The installers start the server once at the end of installation for validation, 
 Start:
 
 ```bash
-./scripts/start_mcp.sh
+./scripts/runtime/start.sh
 ```
 
 Stop:
 
 ```bash
-./scripts/stop_mcp.sh
+./scripts/runtime/stop.sh
 ```
 
 ### Windows
@@ -284,13 +391,13 @@ Stop:
 Start:
 
 ```powershell
-pwsh -ExecutionPolicy Bypass -File .\scripts\start_mcp.ps1
+pwsh -ExecutionPolicy Bypass -File .\scripts\runtime\start.ps1
 ```
 
 Stop:
 
 ```powershell
-pwsh -ExecutionPolicy Bypass -File .\scripts\stop_mcp.ps1
+pwsh -ExecutionPolicy Bypass -File .\scripts\runtime\stop.ps1
 ```
 
 By default the server listens on port `7331`.

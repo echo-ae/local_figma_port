@@ -8,7 +8,7 @@ param(
     [switch]$Purge,
     [switch]$KeepData,
     [string]$Targets,
-    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$ProjectRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
     [string]$StateDir = $(if ($env:LOCAL_FIGMA_PORT_STATE_DIR) { $env:LOCAL_FIGMA_PORT_STATE_DIR } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "LocalFigmaPort" } else { Join-Path $env:USERPROFILE "AppData/Local/LocalFigmaPort" }),
     [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE ".codex" }),
     [string]$CodexAppData = $(if ($env:CODEX_APP_DATA_DIR) { $env:CODEX_APP_DATA_DIR } elseif ($env:APPDATA) { Join-Path $env:APPDATA "Codex" } else { Join-Path $env:USERPROFILE "AppData/Roaming/Codex" }),
@@ -17,7 +17,8 @@ param(
     [string]$CursorHome = (Join-Path $env:USERPROFILE ".cursor")
 )
 
-. (Join-Path $PSScriptRoot "lib/ensure-pwsh7.ps1")
+$LibDir = Join-Path (Split-Path -Parent $PSScriptRoot) "lib"
+. (Join-Path $LibDir "ensure-pwsh7.ps1")
 Restart-InPwsh7IfNeeded -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters -ForwardArgs $MyInvocation.UnboundArguments
 
 $ErrorActionPreference = "Stop"
@@ -35,7 +36,7 @@ $CodexTomlMarkerEnd = "# <<< FIGMA PORT MCP END <<<"
 
 function Show-Usage {
     @"
-usage: .\scripts\uninstall-windows.ps1 [-Codex] [-CodexApp] [-ClaudeCode] [-Cursor] [-All] [-Targets LIST] [-Purge] [-KeepData]
+usage: .\scripts\uninstall\windows.ps1 [-Codex] [-CodexApp] [-ClaudeCode] [-Cursor] [-All] [-Targets LIST] [-Purge] [-KeepData]
 
 options:
   -Codex                 uninstall from Codex
@@ -142,6 +143,27 @@ function Test-JsonFileIfPresent {
     } catch {
         throw "Invalid JSON in ${Label}: ${Path}`n$($_.Exception.Message)"
     }
+}
+
+function Test-JsonHasServer {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        return $false
+    }
+
+    $raw = Get-Content -Raw $Path
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $false
+    }
+
+    try {
+        $parsed = $raw | ConvertFrom-Json -AsHashtable
+    } catch {
+        return $false
+    }
+
+    return $parsed.ContainsKey("mcpServers") -and $parsed.mcpServers -is [System.Collections.IDictionary] -and $parsed.mcpServers.ContainsKey("local-figma-port")
 }
 
 function Write-OrRemoveFile {
@@ -276,21 +298,13 @@ function Remove-JsonMcpServer {
     Remove-BackupFiles -Path $Path
 }
 
-function Test-JsonHasServer {
-    param([string]$Path)
-
-    if (-not (Test-Path $Path)) {
-        return $false
-    }
-    return (Get-Content -Raw $Path).Contains('"local-figma-port"')
-}
-
 function Test-ProjectJsonConfigs {
     if ($ClaudeCode) {
         Test-JsonFileIfPresent -Path (Join-Path $ProjectRoot ".mcp.json") -Label "Claude project MCP config"
     }
     if ($Cursor) {
         Test-JsonFileIfPresent -Path (Join-Path $ProjectRoot ".cursor/mcp.json") -Label "Cursor project MCP config"
+        Test-JsonFileIfPresent -Path (Join-Path $CursorHome "mcp.json") -Label "Cursor global MCP config"
     }
 }
 
@@ -367,6 +381,9 @@ if (-not $CodexApp -and ((Test-Path $CodexAppData) -or (Test-Path $CodexAppExe))
 if (-not $Cursor -and (Test-JsonHasServer (Join-Path $ProjectRoot ".cursor/mcp.json"))) {
     $keepAgents = $true
 }
+if (-not $Cursor -and (Test-JsonHasServer (Join-Path $CursorHome "mcp.json"))) {
+    $keepAgents = $true
+}
 
 Write-Host ""
 Write-Host "[uninstall-windows] summary"
@@ -379,7 +396,7 @@ Write-Host "  - state root: $StateDir"
 if ($CodexApp) { Write-Host "  - codex app data: $CodexAppData" }
 Write-Host ("  - data: {0}" -f $(if ($Purge) { "purge" } else { "keep" }))
 
-& (Join-Path $ProjectRoot "scripts/stop_mcp.ps1") -StateDir $StateDir -McpPort $(if ($env:MCP_PORT) { [int]$env:MCP_PORT } else { 7331 })
+& (Join-Path $ProjectRoot "scripts/runtime/stop.ps1") -StateDir $StateDir -McpPort $(if ($env:MCP_PORT) { [int]$env:MCP_PORT } else { 7331 })
 
 $removeSharedCodex = $Codex -and $CodexApp
 if ($removeSharedCodex) {
@@ -397,6 +414,7 @@ if ($ClaudeCode) {
 
 if ($Cursor) {
     Remove-JsonMcpServer -Path (Join-Path $ProjectRoot ".cursor/mcp.json")
+    Remove-JsonMcpServer -Path (Join-Path $CursorHome "mcp.json")
 }
 
 if (-not $keepAgents -and ($Codex -or $CodexApp -or $Cursor)) {
