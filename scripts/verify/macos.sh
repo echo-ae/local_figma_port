@@ -31,7 +31,7 @@ options:
   --cursor                verify Cursor integration
   --all                   verify all supported targets
   --project-root PATH     override repository root
-  --config-root PATH      override workspace root for project-local config files (.mcp.json, .cursor/mcp.json, CLAUDE.md, AGENTS.md)
+  --config-root PATH      override workspace root for legacy project files that may need cleanup
   --state-dir PATH        override Local Figma Port state root
   --codex-home PATH       override Codex home
   --codex-app-data PATH   override Codex App data dir
@@ -157,10 +157,6 @@ REPO_SQLITE="$(lfp_sqlite_path "$STATE_ROOT_DIR")"
 REPO_DATA="$(lfp_data_dir "$STATE_ROOT_DIR")"
 REPO_SQLITE3_BIN="$(command -v sqlite3 2>/dev/null || true)"
 
-AGENTS_MARKER_START="<!-- FIGMA PORT MANAGED BLOCK START -->"
-AGENTS_MARKER_END="<!-- FIGMA PORT MANAGED BLOCK END -->"
-CLAUDE_MARKER_START="<!-- FIGMA PORT CLAUDE BLOCK START -->"
-CLAUDE_MARKER_END="<!-- FIGMA PORT CLAUDE BLOCK END -->"
 CODEX_TOML_MARKER_START="# >>> FIGMA PORT MCP START >>>"
 CODEX_TOML_MARKER_END="# <<< FIGMA PORT MCP END <<<"
 
@@ -385,9 +381,6 @@ check_sqlite_fts5 "system sqlite3 supports FTS5"
 
 if [[ "$SELECT_CODEX" -eq 1 ]]; then
   verify_codex_shared_config "Codex"
-  check_contains "$CONFIG_ROOT/AGENTS.md" '$Local Figma Port' "AGENTS.md advertises \$Local Figma Port"
-  check_contains "$CONFIG_ROOT/AGENTS.md" "$AGENTS_MARKER_START" "AGENTS.md has managed skill block"
-  check_contains "$CONFIG_ROOT/AGENTS.md" "$REPO_SKILL" "AGENTS.md points at repo skill"
 fi
 
 if [[ "$SELECT_CODEX_APP" -eq 1 ]]; then
@@ -398,23 +391,32 @@ if [[ "$SELECT_CODEX_APP" -eq 1 ]]; then
   fi
   verify_codex_shared_config "Codex App"
   check_codex_app_skill_index "Codex App app-server indexes local-figma-port"
-  check_contains "$CONFIG_ROOT/AGENTS.md" '$Local Figma Port' "Codex App alias is exposed through AGENTS.md"
-  check_contains "$CONFIG_ROOT/AGENTS.md" "$AGENTS_MARKER_START" "Codex App AGENTS.md has managed skill block"
-  check_contains "$CONFIG_ROOT/AGENTS.md" "$REPO_SKILL" "Codex App AGENTS.md points at repo skill"
 fi
 
 if [[ "$SELECT_CLAUDE" -eq 1 ]]; then
   check_contains "$CLAUDE_HOME_DIR/skills/local-figma-port/SKILL.md" "name: local-figma-port" "Claude Code skill installed"
-  check_json_server "$CONFIG_ROOT/.mcp.json" "Claude project MCP config points at repo build"
-  check_contains "$CONFIG_ROOT/CLAUDE.md" "$CLAUDE_MARKER_START" "CLAUDE.md has managed skill block"
-  check_contains "$CONFIG_ROOT/CLAUDE.md" '$Local Figma Port' "CLAUDE.md advertises \$Local Figma Port"
-  check_contains "$CONFIG_ROOT/CLAUDE.md" "$REPO_SKILL" "CLAUDE.md points at repo skill"
+  check_contains "$CLAUDE_HOME_DIR/agents/local-figma-port.md" "name: local-figma-port" "Claude Code subagent file installed"
+  if ! command -v claude >/dev/null 2>&1; then
+    fail "Claude Code CLI is installed (missing command: claude)"
+  else
+    if claude agents 2>/dev/null | grep -Fq "local-figma-port"; then
+      ok "Claude Code subagent is registered"
+    else
+      fail "Claude Code subagent is registered"
+    fi
+    if claude mcp get local-figma-port --scope user 2>/dev/null | grep -Fq "$REPO_MCP_ENTRY_POSIX" &&
+       claude mcp get local-figma-port --scope user 2>/dev/null | grep -Fq "$REPO_SQLITE3_BIN" &&
+       claude mcp get local-figma-port --scope user 2>/dev/null | grep -Fq "$REPO_SQLITE_POSIX" &&
+       claude mcp get local-figma-port --scope user 2>/dev/null | grep -Fq "$REPO_DATA_POSIX"; then
+      ok "Claude Code user MCP config points at repo build"
+    else
+      fail "Claude Code user MCP config points at repo build"
+    fi
+  fi
 fi
 
 if [[ "$SELECT_CURSOR" -eq 1 ]]; then
-  check_json_server "$CONFIG_ROOT/.cursor/mcp.json" "Cursor project MCP config points at repo build"
-  check_contains "$CONFIG_ROOT/AGENTS.md" '$Local Figma Port' "Cursor alias is exposed through AGENTS.md"
-  check_contains "$CONFIG_ROOT/AGENTS.md" "$AGENTS_MARKER_END" "AGENTS.md managed block is complete"
+  check_json_server "$CURSOR_HOME_DIR/mcp.json" "Cursor global MCP config points at repo build"
 fi
 
 if [[ "$failures" -ne 0 ]]; then

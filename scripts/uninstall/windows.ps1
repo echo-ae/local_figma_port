@@ -27,8 +27,6 @@ $ProjectRoot = (Resolve-Path $ProjectRoot).Path
 $StateDir = [System.IO.Path]::GetFullPath($StateDir)
 $Timestamp = Get-Date -Format "yyyyMMddHHmmss"
 
-$AgentsMarkerStart = "<!-- FIGMA PORT MANAGED BLOCK START -->"
-$AgentsMarkerEnd = "<!-- FIGMA PORT MANAGED BLOCK END -->"
 $ClaudeMarkerStart = "<!-- FIGMA PORT CLAUDE BLOCK START -->"
 $ClaudeMarkerEnd = "<!-- FIGMA PORT CLAUDE BLOCK END -->"
 $CodexTomlMarkerStart = "# >>> FIGMA PORT MCP START >>>"
@@ -303,7 +301,6 @@ function Test-ProjectJsonConfigs {
         Test-JsonFileIfPresent -Path (Join-Path $ProjectRoot ".mcp.json") -Label "Claude project MCP config"
     }
     if ($Cursor) {
-        Test-JsonFileIfPresent -Path (Join-Path $ProjectRoot ".cursor/mcp.json") -Label "Cursor project MCP config"
         Test-JsonFileIfPresent -Path (Join-Path $CursorHome "mcp.json") -Label "Cursor global MCP config"
     }
 }
@@ -371,20 +368,6 @@ if (-not $explicitSelection) {
 Test-ProjectJsonConfigs
 Resolve-DataMode
 
-$keepAgents = $false
-if (-not $Codex -and (Test-Path (Join-Path $CodexHome "config.toml")) -and (Get-Content -Raw (Join-Path $CodexHome "config.toml")).Contains("[mcp_servers.local-figma-port]")) {
-    $keepAgents = $true
-}
-if (-not $CodexApp -and ((Test-Path $CodexAppData) -or (Test-Path $CodexAppExe))) {
-    $keepAgents = $true
-}
-if (-not $Cursor -and (Test-JsonHasServer (Join-Path $ProjectRoot ".cursor/mcp.json"))) {
-    $keepAgents = $true
-}
-if (-not $Cursor -and (Test-JsonHasServer (Join-Path $CursorHome "mcp.json"))) {
-    $keepAgents = $true
-}
-
 Write-Host ""
 Write-Host "[uninstall-windows] summary"
 if ($Codex) { Write-Host "  - Codex" }
@@ -407,18 +390,19 @@ if ($removeSharedCodex) {
 }
 
 if ($ClaudeCode) {
+    $claudeCmd = Get-Command "claude" -ErrorAction SilentlyContinue
+    if ($claudeCmd) {
+        & $claudeCmd.Source mcp remove local-figma-port --scope user | Out-Null
+    }
     Remove-JsonMcpServer -Path (Join-Path $ProjectRoot ".mcp.json")
     Remove-MarkdownManagedBlock -Path (Join-Path $ProjectRoot "CLAUDE.md") -StartMarker $ClaudeMarkerStart -EndMarker $ClaudeMarkerEnd
+    Remove-PathSafe -Path (Join-Path $ClaudeHome "agents/local-figma-port.md")
     Remove-PathSafe -Path (Join-Path $ClaudeHome "skills/local-figma-port")
 }
 
 if ($Cursor) {
-    Remove-JsonMcpServer -Path (Join-Path $ProjectRoot ".cursor/mcp.json")
     Remove-JsonMcpServer -Path (Join-Path $CursorHome "mcp.json")
-}
-
-if (-not $keepAgents -and ($Codex -or $CodexApp -or $Cursor)) {
-    Remove-MarkdownManagedBlock -Path (Join-Path $ProjectRoot "AGENTS.md") -StartMarker $AgentsMarkerStart -EndMarker $AgentsMarkerEnd
+    Remove-JsonMcpServer -Path (Join-Path $ProjectRoot ".cursor/mcp.json")
 }
 
 if ($Purge) {

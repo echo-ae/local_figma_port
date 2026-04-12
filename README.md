@@ -223,10 +223,8 @@ The bootstrap script:
 - downloads the matching prebuilt macOS bundle from GitHub Releases
 - installs Node.js and a Homebrew `sqlite3` build with `FTS5` support if they are missing
 - asks which coding agent to configure and applies the install for that target
-- writes project-local config into the current working directory when you choose `Claude Code` or `Cursor`
-
-If you are installing for `Claude Code` or `Cursor`, run the command from the
-workspace root you want to configure.
+- installs a user-scoped `Claude Code` subagent and user-scoped MCP server when you choose `Claude Code`
+- installs a global `Cursor` MCP config in `~/.cursor/mcp.json` when you choose `Cursor`
 
 If you are building from a checked-out repository instead of using a release
 bundle, see [Build](#build).
@@ -251,10 +249,8 @@ The bootstrap script:
 - downloads the matching prebuilt Windows bundle from GitHub Releases
 - installs PowerShell 7 and Node.js LTS if they are missing
 - asks which coding agent to configure and applies the install for that target
-- writes project-local config into the current working directory when you choose `Claude Code` or `Cursor`
-
-If you are installing for `Claude Code` or `Cursor`, run the command from the
-workspace root you want to configure.
+- installs a user-scoped `Claude Code` subagent and user-scoped MCP server when you choose `Claude Code`
+- installs a global `Cursor` MCP config in `~/.cursor/mcp.json` when you choose `Cursor`
 
 If you are building from a checked-out repository instead of using a release
 bundle, see [Build](#build).
@@ -281,6 +277,10 @@ Supported target numbers:
 
 The Linux installer validates that the system `sqlite3` CLI supports `FTS5`
 before it finishes.
+
+When you choose `Claude Code`, the Linux installer adds a user-scoped subagent
+and user-scoped MCP server. When you choose `Cursor`, it installs a global MCP
+config in `~/.cursor/mcp.json`.
 
 Default state root on Linux:
 

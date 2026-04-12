@@ -34,7 +34,7 @@ options:
   --use-prebuilt          install from a prebuilt runtime bundle without local Rust/TypeScript builds
   --targets LIST          install for comma-separated target numbers: 1=Codex, 2=Codex App, 3=Claude Code, 4=Cursor
   --project-root PATH     override repository root
-  --config-root PATH      override workspace root for project-local config files (.mcp.json, .cursor/mcp.json, CLAUDE.md, AGENTS.md)
+  --config-root PATH      override workspace root for legacy project files that may need cleanup
   --state-dir PATH        override Local Figma Port state root
   --codex-home PATH       override Codex home (default: \$CODEX_HOME or ~/.codex)
   --codex-app-data PATH   override Codex App data dir (default: ~/Library/Application Support/Codex)
@@ -247,10 +247,6 @@ REPO_DATA_POSIX="$REPO_DATA"
 REPO_SQLITE3_BIN=""
 TIMESTAMP="$(date +%Y%m%d%H%M%S)"
 
-AGENTS_MARKER_START="<!-- FIGMA PORT MANAGED BLOCK START -->"
-AGENTS_MARKER_END="<!-- FIGMA PORT MANAGED BLOCK END -->"
-CLAUDE_MARKER_START="<!-- FIGMA PORT CLAUDE BLOCK START -->"
-CLAUDE_MARKER_END="<!-- FIGMA PORT CLAUDE BLOCK END -->"
 CODEX_TOML_MARKER_START="# >>> FIGMA PORT MCP START >>>"
 CODEX_TOML_MARKER_END="# <<< FIGMA PORT MCP END <<<"
 
@@ -476,11 +472,8 @@ NODE
 }
 
 preflight_project_json_configs() {
-  if [[ "$SELECT_CLAUDE" -eq 1 ]]; then
-    validate_json_file_if_present "$CONFIG_ROOT/.mcp.json" "Claude project MCP config"
-  fi
   if [[ "$SELECT_CURSOR" -eq 1 ]]; then
-    validate_json_file_if_present "$CONFIG_ROOT/.cursor/mcp.json" "Cursor project MCP config"
+    validate_json_file_if_present "$CURSOR_HOME_DIR/mcp.json" "Cursor global MCP config"
   fi
 }
 
@@ -499,32 +492,6 @@ seed_state_data_if_needed() {
     cp -R "$PROJECT_DATA_DIR"/. "$REPO_DATA"/
     echo "[install-mac] seeded stable state data from $PROJECT_DATA_DIR"
   fi
-}
-
-render_agents_block() {
-  cat <<EOF
-## Local Figma Port
-
-### Available skills
-- Local Figma Port: Use when implementing UI from this repository's \`local-figma-port\` MCP server where nested descendants, partial node reads, or ambiguous style ownership could cause the agent to stop early and guess instead of fully tracing the design source. (file: $REPO_SKILL_POSIX)
-
-### How to use skills
-- If the user names this skill with \`\$Local Figma Port\` or plain text \`Local Figma Port\`, you must use it for that turn.
-- Read the skill file above and follow it directly.
-- Treat \`Local Figma Port\` as the canonical human-facing alias for this repository skill.
-EOF
-}
-
-render_claude_block() {
-  cat <<EOF
-## Local Figma Port
-
-When the user mentions \`\$Local Figma Port\` or \`Local Figma Port\`, use the skill at \`$REPO_SKILL_POSIX\`.
-
-Use this skill for:
-- exact implementation from this repository's \`local-figma-port\` MCP server;
-- setup or troubleshooting of the Local Figma Port workflow itself.
-EOF
 }
 
 render_codex_toml_block() {
@@ -555,11 +522,10 @@ write_with_backup() {
   echo "[install-mac] wrote: $file"
 }
 
-upsert_markdown_block() {
+remove_markdown_block() {
   local file="$1"
   local marker_start="$2"
   local marker_end="$3"
-  local block="$4"
   local tmp
 
   tmp="$(mktemp)"
@@ -572,12 +538,25 @@ upsert_markdown_block() {
   fi
 
   if [[ -s "$tmp" ]]; then
+    awk '
+      { lines[NR] = $0 }
+      NF { last_nonempty = NR }
+      END {
+        for (i = 1; i <= last_nonempty; i++) {
+          print lines[i]
+        }
+      }
+    ' "$tmp" > "$tmp.cleaned"
+    mv "$tmp.cleaned" "$tmp"
     printf '\n' >> "$tmp"
+    write_with_backup "$file" "$tmp"
+  else
+    rm -f "$tmp"
+    if [[ -f "$file" ]]; then
+      rm -f "$file"
+      echo "[install-mac] removed: $file"
+    fi
   fi
-  printf '%s\n' "$marker_start" >> "$tmp"
-  printf '%s\n' "$block" >> "$tmp"
-  printf '%s\n' "$marker_end" >> "$tmp"
-  write_with_backup "$file" "$tmp"
 }
 
 upsert_codex_toml_block() {
@@ -642,6 +621,50 @@ NODE
   write_with_backup "$file" "$tmp"
 }
 
+remove_json_mcp_server() {
+  local file="$1"
+  local tmp
+
+  tmp="$(mktemp)"
+  node - "$file" "$tmp" <<'NODE'
+const fs = require("node:fs");
+const [file, tmp] = process.argv.slice(2);
+let data = {};
+if (fs.existsSync(file)) {
+  const raw = fs.readFileSync(file, "utf8").trim();
+  if (raw) {
+    data = JSON.parse(raw);
+  }
+}
+if (!data || typeof data !== "object" || Array.isArray(data)) {
+  data = {};
+}
+if (data.mcpServers && typeof data.mcpServers === "object" && !Array.isArray(data.mcpServers)) {
+  delete data.mcpServers["local-figma-port"];
+  delete data.mcpServers.design_local;
+  if (Object.keys(data.mcpServers).length === 0) {
+    delete data.mcpServers;
+  }
+}
+if (Object.keys(data).length === 0) {
+  fs.writeFileSync(tmp, "");
+} else {
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
+}
+NODE
+
+  if [[ ! -s "$tmp" ]]; then
+    rm -f "$tmp"
+    if [[ -f "$file" ]]; then
+      rm -f "$file"
+      echo "[install-mac] removed: $file"
+    fi
+    return
+  fi
+
+  write_with_backup "$file" "$tmp"
+}
+
 copy_skill_file() {
   local target_dir="$1"
   local target_file="$target_dir/SKILL.md"
@@ -661,6 +684,37 @@ interface:
   default_prompt: Use the Local Figma Port MCP server as the source of truth and implement the target UI with exact traced fidelity.
 EOF
   write_with_backup "$interface_file" "$interface_tmp"
+}
+
+set_claude_user_subagent() {
+  local agent_file="$CLAUDE_HOME_DIR/agents/local-figma-port.md"
+  local tmp
+
+  tmp="$(mktemp)"
+  cat > "$tmp" <<EOF
+---
+name: local-figma-port
+description: Use proactively when implementing UI from Local Figma Port MCP context or when troubleshooting this MCP workflow.
+---
+
+You are the Local Figma Port specialist for Claude Code.
+
+When the user asks for Local Figma Port, Figma implementation fidelity, or MCP troubleshooting:
+- Follow the skill at \`$CLAUDE_HOME_DIR/skills/local-figma-port/SKILL.md\`.
+- Prefer the \`local-figma-port\` MCP server over guessing from partial context.
+- Use the exported design context end-to-end before concluding work.
+EOF
+  write_with_backup "$agent_file" "$tmp"
+}
+
+set_claude_user_mcp_server() {
+  require_cmd claude
+
+  claude mcp remove local-figma-port --scope user >/dev/null 2>&1 || true
+  claude mcp add-json local-figma-port --scope user "$(cat <<EOF
+{"type":"stdio","command":"node","args":["$REPO_MCP_ENTRY_POSIX"],"env":{"SQLITE3_BIN":"$REPO_SQLITE3_BIN","SQLITE_PATH":"$REPO_SQLITE_POSIX","DATA_DIR":"$REPO_DATA_POSIX"}}
+EOF
+)" >/dev/null
 }
 
 print_summary() {
@@ -694,16 +748,15 @@ fi
 
 if [[ "$SELECT_CLAUDE" -eq 1 ]]; then
   copy_skill_file "$CLAUDE_HOME_DIR/skills/local-figma-port"
-  upsert_json_mcp_file "$CONFIG_ROOT/.mcp.json"
-  upsert_markdown_block "$CONFIG_ROOT/CLAUDE.md" "$CLAUDE_MARKER_START" "$CLAUDE_MARKER_END" "$(render_claude_block)"
-fi
-
-if [[ "$SELECT_CODEX" -eq 1 || "$SELECT_CODEX_APP" -eq 1 || "$SELECT_CURSOR" -eq 1 ]]; then
-  upsert_markdown_block "$CONFIG_ROOT/AGENTS.md" "$AGENTS_MARKER_START" "$AGENTS_MARKER_END" "$(render_agents_block)"
+  set_claude_user_subagent
+  set_claude_user_mcp_server
+  remove_json_mcp_server "$CONFIG_ROOT/.mcp.json"
+  remove_markdown_block "$CONFIG_ROOT/CLAUDE.md" "<!-- FIGMA PORT CLAUDE BLOCK START -->" "<!-- FIGMA PORT CLAUDE BLOCK END -->"
 fi
 
 if [[ "$SELECT_CURSOR" -eq 1 ]]; then
-  upsert_json_mcp_file "$CONFIG_ROOT/.cursor/mcp.json"
+  upsert_json_mcp_file "$CURSOR_HOME_DIR/mcp.json"
+  remove_json_mcp_server "$CONFIG_ROOT/.cursor/mcp.json"
 fi
 
 VERIFY_ARGS=(--project-root "$PROJECT_ROOT" --config-root "$CONFIG_ROOT" --state-dir "$STATE_ROOT_DIR" --codex-home "$CODEX_HOME_DIR" --claude-home "$CLAUDE_HOME_DIR" --cursor-home "$CURSOR_HOME_DIR")

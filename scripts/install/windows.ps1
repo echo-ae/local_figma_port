@@ -61,8 +61,6 @@ $RepoData = Join-Path $StateDir "data"
 $RepoSqlite = Join-Path $RepoData "design_store.sqlite"
 $Timestamp = Get-Date -Format "yyyyMMddHHmmss"
 
-$AgentsMarkerStart = "<!-- FIGMA PORT MANAGED BLOCK START -->"
-$AgentsMarkerEnd = "<!-- FIGMA PORT MANAGED BLOCK END -->"
 $ClaudeMarkerStart = "<!-- FIGMA PORT CLAUDE BLOCK START -->"
 $ClaudeMarkerEnd = "<!-- FIGMA PORT CLAUDE BLOCK END -->"
 $CodexTomlMarkerStart = "# >>> FIGMA PORT MCP START >>>"
@@ -81,7 +79,7 @@ options:
   -UsePrebuilt           install from a prebuilt runtime bundle without local Rust/TypeScript builds
   -Targets LIST          install for comma-separated target numbers: 1=Codex, 2=Codex App, 3=Claude Code, 4=Cursor
   -ProjectRoot PATH      override repository root
-  -ConfigRoot PATH       override workspace root for project-local config files (.mcp.json, .cursor/mcp.json, CLAUDE.md, AGENTS.md)
+  -ConfigRoot PATH       override workspace root for legacy project files that may need cleanup
   -StateDir PATH         override Local Figma Port state root
   -CodexHome PATH        override Codex home
   -CodexAppData PATH     override Codex App data dir
@@ -355,12 +353,11 @@ function Write-WithBackup {
     Write-Host "[install-windows] wrote: $Path"
 }
 
-function Set-MarkdownManagedBlock {
+function Remove-MarkdownManagedBlock {
     param(
         [string]$Path,
         [string]$StartMarker,
-        [string]$EndMarker,
-        [string]$Block
+        [string]$EndMarker
     )
 
     $baseText = ""
@@ -368,13 +365,15 @@ function Set-MarkdownManagedBlock {
         $baseText = Remove-ManagedBlockText -Text (Get-Content -Raw $Path) -StartMarker $StartMarker -EndMarker $EndMarker
     }
 
-    $newText = if ([string]::IsNullOrWhiteSpace($baseText)) {
-        "$StartMarker`n$Block`n$EndMarker`n"
-    } else {
-        "$baseText`n`n$StartMarker`n$Block`n$EndMarker`n"
+    if ([string]::IsNullOrWhiteSpace($baseText)) {
+        if (Test-Path $Path) {
+            Remove-Item -LiteralPath $Path -Force
+            Write-Host "[install-windows] removed: $Path"
+        }
+        return
     }
 
-    Write-WithBackup -Path $Path -Content $newText
+    Write-WithBackup -Path $Path -Content ($baseText.TrimEnd() + "`n")
 }
 
 function Set-CodexTomlBlock {
@@ -446,6 +445,39 @@ function Set-JsonMcpFile {
     $payload.mcpServers["local-figma-port"] = $server
     $json = ($payload | ConvertTo-Json -Depth 8)
     Write-WithBackup -Path $Path -Content ($json + "`n")
+}
+
+function Remove-JsonMcpServer {
+    param([string]$Path)
+
+    $payload = @{}
+    if (Test-Path $Path) {
+        $raw = Get-Content -Raw $Path
+        if (-not [string]::IsNullOrWhiteSpace($raw)) {
+            $payload = $raw | ConvertFrom-Json -AsHashtable
+        }
+    }
+
+    if (-not ($payload -is [System.Collections.IDictionary])) {
+        $payload = @{}
+    }
+    if ($payload.ContainsKey("mcpServers") -and $payload.mcpServers -is [System.Collections.IDictionary]) {
+        $payload.mcpServers.Remove("local-figma-port") | Out-Null
+        $payload.mcpServers.Remove("design_local") | Out-Null
+        if ($payload.mcpServers.Count -eq 0) {
+            $payload.Remove("mcpServers") | Out-Null
+        }
+    }
+
+    if ($payload.Count -eq 0) {
+        if (Test-Path $Path) {
+            Remove-Item -LiteralPath $Path -Force
+            Write-Host "[install-windows] removed: $Path"
+        }
+        return
+    }
+
+    Write-WithBackup -Path $Path -Content (($payload | ConvertTo-Json -Depth 8) + "`n")
 }
 
 function Ensure-McpRuntime {
@@ -573,11 +605,7 @@ function Show-FigmaPluginManifestInstructions {
 }
 
 function Test-ProjectJsonConfigs {
-    if ($ClaudeCode) {
-        Test-JsonFileIfPresent -Path (Join-Path $ConfigRoot ".mcp.json") -Label "Claude project MCP config"
-    }
     if ($Cursor) {
-        Test-JsonFileIfPresent -Path (Join-Path $ConfigRoot ".cursor/mcp.json") -Label "Cursor project MCP config"
         Test-JsonFileIfPresent -Path (Join-Path $CursorHome "mcp.json") -Label "Cursor global MCP config"
     }
 }
@@ -641,30 +669,39 @@ interface:
     Write-WithBackup -Path $interfaceTarget -Content $interfaceContent
 }
 
-function Render-AgentsBlock {
-    return @'
-## Local Figma Port
+function Set-ClaudeUserSubagent {
+    $agentTarget = Join-Path $ClaudeHome "agents/local-figma-port.md"
+    $skillPath = To-PosixPath (Join-Path $ClaudeHome "skills/local-figma-port/SKILL.md")
+    $agentContent = @'
+---
+name: local-figma-port
+description: Use proactively when implementing UI from Local Figma Port MCP context or when troubleshooting this MCP workflow.
+---
 
-### Available skills
-- Local Figma Port: Use when implementing UI from this repository's `local-figma-port` MCP server where nested descendants, partial node reads, or ambiguous style ownership could cause the agent to stop early and guess instead of fully tracing the design source. (file: {0})
+You are the Local Figma Port specialist for Claude Code.
 
-### How to use skills
-- If the user names this skill with `$Local Figma Port` or plain text `Local Figma Port`, you must use it for that turn.
-- Read the skill file above and follow it directly.
-- Treat `Local Figma Port` as the canonical human-facing alias for this repository skill.
-'@ -f (To-PosixPath $RepoSkill)
+When the user asks for Local Figma Port, Figma implementation fidelity, or MCP troubleshooting:
+- Follow the skill at `{0}`.
+- Prefer the `local-figma-port` MCP server over guessing from partial context.
+- Use the exported design context end-to-end before concluding work.
+'@ -f $skillPath
+
+    Write-WithBackup -Path $agentTarget -Content $agentContent
 }
 
-function Render-ClaudeBlock {
-    return @'
-## Local Figma Port
+function Set-ClaudeUserMcpServer {
+    Require-Command -Name "claude"
 
-When the user mentions `$Local Figma Port` or `Local Figma Port`, use the skill at `{0}`.
+    & claude mcp remove local-figma-port --scope user | Out-Null
 
-Use this skill for:
-- exact implementation from this repository's `local-figma-port` MCP server;
-- setup or troubleshooting of the Local Figma Port workflow itself.
-'@ -f (To-PosixPath $RepoSkill)
+    & claude mcp add local-figma-port --scope user `
+        --env ("SQLITE3_BIN={0}" -f (To-PosixPath $RepoSqliteBin)) `
+        --env ("SQLITE_PATH={0}" -f (To-PosixPath $RepoSqlite)) `
+        --env ("DATA_DIR={0}" -f (To-PosixPath $RepoData)) `
+        -- node (To-PosixPath $RepoMcpEntry) | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "claude mcp add failed for user-scoped local-figma-port"
+    }
 }
 
 function Render-CodexTomlBlock {
@@ -763,17 +800,15 @@ if ($Codex -or $CodexApp) {
 
 if ($ClaudeCode) {
     Copy-SkillFile -TargetDir (Join-Path $ClaudeHome "skills/local-figma-port")
-    Set-JsonMcpFile -Path (Join-Path $ConfigRoot ".mcp.json")
-    Set-MarkdownManagedBlock -Path (Join-Path $ConfigRoot "CLAUDE.md") -StartMarker $ClaudeMarkerStart -EndMarker $ClaudeMarkerEnd -Block (Render-ClaudeBlock)
-}
-
-if ($Codex -or $CodexApp -or $Cursor) {
-    Set-MarkdownManagedBlock -Path (Join-Path $ConfigRoot "AGENTS.md") -StartMarker $AgentsMarkerStart -EndMarker $AgentsMarkerEnd -Block (Render-AgentsBlock)
+    Set-ClaudeUserSubagent
+    Set-ClaudeUserMcpServer
+    Remove-JsonMcpServer -Path (Join-Path $ConfigRoot ".mcp.json")
+    Remove-MarkdownManagedBlock -Path (Join-Path $ConfigRoot "CLAUDE.md") -StartMarker $ClaudeMarkerStart -EndMarker $ClaudeMarkerEnd
 }
 
 if ($Cursor) {
-    Set-JsonMcpFile -Path (Join-Path $ConfigRoot ".cursor/mcp.json")
     Set-JsonMcpFile -Path (Join-Path $CursorHome "mcp.json")
+    Remove-JsonMcpServer -Path (Join-Path $ConfigRoot ".cursor/mcp.json")
 }
 
 $verifyParams = @{

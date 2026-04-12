@@ -178,8 +178,6 @@ PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 STATE_ROOT_DIR="$(normalize_path "$STATE_ROOT_DIR")"
 TIMESTAMP="$(date +%Y%m%d%H%M%S)"
 
-AGENTS_MARKER_START="<!-- FIGMA PORT MANAGED BLOCK START -->"
-AGENTS_MARKER_END="<!-- FIGMA PORT MANAGED BLOCK END -->"
 CLAUDE_MARKER_START="<!-- FIGMA PORT CLAUDE BLOCK START -->"
 CLAUDE_MARKER_END="<!-- FIGMA PORT CLAUDE BLOCK END -->"
 CODEX_TOML_MARKER_START="# >>> FIGMA PORT MCP START >>>"
@@ -288,7 +286,7 @@ preflight_project_json_configs() {
     validate_json_file_if_present "$PROJECT_ROOT/.mcp.json" "Claude project MCP config"
   fi
   if [[ "$SELECT_CURSOR" -eq 1 ]]; then
-    validate_json_file_if_present "$PROJECT_ROOT/.cursor/mcp.json" "Cursor project MCP config"
+    validate_json_file_if_present "$CURSOR_HOME_DIR/mcp.json" "Cursor global MCP config"
   fi
 }
 
@@ -431,7 +429,7 @@ codex_is_configured() {
 }
 
 cursor_is_configured() {
-  json_has_local_server "$PROJECT_ROOT/.cursor/mcp.json"
+  json_has_local_server "$CURSOR_HOME_DIR/mcp.json"
 }
 
 print_summary() {
@@ -454,31 +452,24 @@ print_summary
 preflight_project_json_configs
 LOCAL_FIGMA_PORT_STATE_DIR="$STATE_ROOT_DIR" "$PROJECT_ROOT/scripts/runtime/stop.sh" || true
 
-KEEP_AGENTS=0
-if [[ "$SELECT_CODEX" -eq 0 ]] && codex_is_configured; then
-  KEEP_AGENTS=1
-fi
-if [[ "$SELECT_CURSOR" -eq 0 ]] && cursor_is_configured; then
-  KEEP_AGENTS=1
-fi
-
 if [[ "$SELECT_CODEX" -eq 1 ]]; then
   remove_codex_toml_block "$CODEX_HOME_DIR/config.toml"
   remove_path "$CODEX_HOME_DIR/skills/local-figma-port"
 fi
 
 if [[ "$SELECT_CLAUDE" -eq 1 ]]; then
+  if command -v claude >/dev/null 2>&1; then
+    claude mcp remove local-figma-port --scope user >/dev/null 2>&1 || true
+  fi
   remove_json_mcp_server "$PROJECT_ROOT/.mcp.json"
   remove_markdown_block "$PROJECT_ROOT/CLAUDE.md" "$CLAUDE_MARKER_START" "$CLAUDE_MARKER_END"
+  remove_path "$CLAUDE_HOME_DIR/agents/local-figma-port.md"
   remove_path "$CLAUDE_HOME_DIR/skills/local-figma-port"
 fi
 
 if [[ "$SELECT_CURSOR" -eq 1 ]]; then
+  remove_json_mcp_server "$CURSOR_HOME_DIR/mcp.json"
   remove_json_mcp_server "$PROJECT_ROOT/.cursor/mcp.json"
-fi
-
-if [[ "$KEEP_AGENTS" -eq 0 && ( "$SELECT_CODEX" -eq 1 || "$SELECT_CURSOR" -eq 1 ) ]]; then
-  remove_markdown_block "$PROJECT_ROOT/AGENTS.md" "$AGENTS_MARKER_START" "$AGENTS_MARKER_END"
 fi
 
 if [[ "$PURGE_DATA" -eq 1 ]]; then
