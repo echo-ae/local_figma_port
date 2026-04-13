@@ -13,6 +13,7 @@ import { resolveInstance } from "./tools/resolve_instance.js";
 import { resolveTarget } from "./tools/resolve_target.js";
 import { buildCoverageChecklist } from "./tools/build_coverage_checklist.js";
 import { getResource } from "./resources/handlers.js";
+import { resolveToolSchemaPath } from "./schema/schema_path.js";
 import { validateToolInput, validateToolOutput } from "./schema/validate.js";
 import { query } from "./db.js";
 
@@ -26,8 +27,7 @@ type JsonRpcRequest = {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, "../../..");
-const schemaPath = path.join(repoRoot, "schemas", "mcp-tools.v1.schema.json");
+const schemaPath = resolveToolSchemaPath(__dirname);
 let schema: any = { properties: { tools: { properties: {} } } };
 try {
   schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));

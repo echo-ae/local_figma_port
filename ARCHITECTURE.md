@@ -116,6 +116,33 @@ Responsibilities:
 
 This layer is not part of the import/query runtime, but it is part of the system architecture because agent behavior depends on it.
 
+### 5. Agent integration and deployment layer
+
+Paths:
+
+- `scripts/install/*`
+- `scripts/uninstall/*`
+- `scripts/verify/*`
+- `scripts/lib/claude_desktop_extension.sh`
+- `scripts/release/package-macos.sh`
+
+Responsibilities:
+
+- Install the right MCP integration surface for each supported agent.
+- Keep runtime state paths, SQLite paths, and MCP entry points stable across install modes.
+- Bridge the same local MCP server into different client environments:
+  - `Codex` / `Codex App`
+    - global skill plus `~/.codex/config.toml`
+  - `Claude Code`
+    - user-scoped subagent plus user-scoped MCP registration through the `claude` CLI
+  - `Claude Desktop`
+    - local `.mcpb` extension bundle with a generated `manifest.json`
+  - `Cursor`
+    - global `~/.cursor/mcp.json`
+- Package and reuse a prebuilt Claude Desktop extension payload in release bundles when available.
+
+This layer is not part of the importer or MCP query core, but it is part of the architecture because the same design store is exposed through multiple agent-specific installation and runtime surfaces.
+
 ## Data Contracts
 
 These files are the main architectural contracts:
@@ -256,6 +283,40 @@ Used for:
 
 This is the richer agent-facing mode. In practice, stdio exposes the workflow-oriented tools used by MCP clients, including `resolve_target` and `build_coverage_checklist`.
 
+## Client Integration Surfaces
+
+The import/query core stays the same across agents, but the connection surface differs by client:
+
+- `Codex` / `Codex App`
+  - connect through `~/.codex/config.toml`
+  - use the repository skill as the primary workflow guidance layer
+- `Claude Code`
+  - connect through user-scoped `claude mcp ... --scope user`
+  - install a `local-figma-port` subagent in `~/.claude/agents/`
+- `Claude Desktop`
+  - connect through a local `.mcpb` desktop extension bundle
+  - the extension embeds the MCP server payload and a generated manifest that points at the local state paths
+- `Cursor`
+  - connect through global `~/.cursor/mcp.json`
+
+This separation is why install behavior lives outside the MCP server package itself: the same local store and stdio server are deployed differently depending on the target agent.
+
+## Claude Desktop Extension Path
+
+`Claude Desktop` is a separate deployment surface from `Claude Code`.
+
+The current extension flow is:
+
+1. Prepare an extension payload rooted at `packages/mcp-server` output plus runtime dependencies.
+2. Generate a Desktop-extension `manifest.json` that points at:
+   - `server/mcp-stdio.js`
+   - the local SQLite path
+   - the local data directory
+3. Pack that directory into `local-figma-port.mcpb`.
+4. Install the resulting bundle in `Claude Desktop -> Settings -> Extensions`.
+
+Release bundles may ship a prebuilt extension payload so installers do not need to rebuild the Desktop-extension runtime dependencies locally.
+
 ## Query Philosophy
 
 The repository is optimized around a few architectural rules:
@@ -318,7 +379,11 @@ When making changes, this is the quickest way to find the right layer:
   - wire it into `src/mcp-stdio.ts`
   - update `schemas/mcp-tools.v1.schema.json`
 - Runtime/install behavior changed:
-  - check `scripts/install/*`, `scripts/runtime/*`, `scripts/verify/*`, `scripts/uninstall/*`, and `scripts/lib/local_figma_port_state.sh`
+  - check `scripts/install/*`, `scripts/runtime/*`, `scripts/verify/*`, `scripts/uninstall/*`, `scripts/lib/local_figma_port_state.sh`, and `scripts/lib/claude_desktop_extension.sh`
+- Claude Desktop extension packaging changed:
+  - check `scripts/lib/claude_desktop_extension.sh`
+  - check `scripts/release/package-macos.sh`
+  - check installer-specific Desktop bundle generation in `scripts/install/*`
 
 ## Related Documents
 

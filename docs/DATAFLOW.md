@@ -66,6 +66,41 @@ It is implemented in `packages/mcp-server/src/mcp-stdio.ts` and exposes:
 - workflow tools such as `resolve_target`, `build_coverage_checklist`, `resolve_instance`
 - bounded context packaging via `get_context_bundle`
 
+## Agent Integration Flow
+
+The import/query pipeline is shared, but each supported client connects to it differently:
+
+- `Codex` / `Codex App`
+  - global MCP registration in `~/.codex/config.toml`
+- `Claude Code`
+  - user-scoped MCP registration through the `claude` CLI
+  - user-scoped `local-figma-port` subagent in `~/.claude/agents/`
+- `Claude Desktop`
+  - local `local-figma-port.mcpb` extension bundle installed through `Settings -> Extensions`
+- `Cursor`
+  - global MCP registration in `~/.cursor/mcp.json`
+
+This means the data flow into the store is the same for every client, while the installation and discovery flow differs per agent.
+
+## Claude Desktop Extension Flow
+
+`Claude Desktop` does not use the same integration path as `Claude Code`.
+
+Current Desktop-extension flow:
+
+1. Build or reuse a prepared extension payload containing:
+   - `server/mcp-stdio.js`
+   - runtime `node_modules`
+   - `schemas/*`
+2. Generate a Desktop-extension `manifest.json` with local runtime paths for:
+   - `SQLITE_PATH`
+   - `DATA_DIR`
+   - `SQLITE3_BIN` where relevant
+3. Pack the extension directory into `local-figma-port.mcpb`
+4. Hand that bundle to `Claude Desktop` for installation
+
+Release bundles may include a prebuilt extension payload so this path can skip a fresh dependency install during bootstrap installation.
+
 ## Query Flow
 
 Typical agent workflow:

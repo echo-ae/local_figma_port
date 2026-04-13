@@ -2,11 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv";
+import { resolveToolSchemaPath } from "./schema_path.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, "../../../..");
-const schemaPath = path.join(repoRoot, "schemas", "mcp-tools.v1.schema.json");
+const schemaPath = resolveToolSchemaPath(__dirname);
 
 const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
 const AjvCtor: any = (Ajv as any)?.default ?? (Ajv as any);

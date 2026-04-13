@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$ROOT_DIR/scripts/lib/claude_desktop_extension.sh"
 
 TARGETS="all"
 DO_BUILD=0
@@ -10,6 +11,7 @@ OUTPUT_DIR="$ROOT_DIR/out/release/macos"
 STAGING_ROOT=""
 KEEP_STAGING=0
 BUNDLE_PREFIX="local-figma-port-macos"
+CLAUDE_DESKTOP_PAYLOAD_ROOT=""
 
 usage() {
   cat <<EOF
@@ -228,6 +230,15 @@ build_shared_runtime() {
   ensure_shared_runtime_artifacts
 }
 
+prepare_claude_desktop_payload() {
+  require_cmd node
+  require_cmd npm
+
+  CLAUDE_DESKTOP_PAYLOAD_ROOT="$STAGING_ROOT/shared/claude-desktop-extension-payload"
+  echo "[package-macos] preparing Claude Desktop extension payload in $CLAUDE_DESKTOP_PAYLOAD_ROOT"
+  lfp_cdext_prepare_payload "$ROOT_DIR/packages/mcp-server" "$ROOT_DIR" "$CLAUDE_DESKTOP_PAYLOAD_ROOT"
+}
+
 build_importer_for_arch() {
   local arch="$1"
   local rust_target=""
@@ -338,6 +349,7 @@ stage_bundle() {
     "scripts/runtime/stop.sh"
     "scripts/uninstall/macos.sh"
     "scripts/verify/macos.sh"
+    "scripts/lib/claude_desktop_extension.sh"
     "scripts/lib/local_figma_port_state.sh"
     "packages/mcp-server/dist"
     "packages/mcp-server/package.json"
@@ -353,6 +365,9 @@ stage_bundle() {
   for relative_path in "${shared_paths[@]}"; do
     copy_relative_path "$relative_path"
   done
+
+  mkdir -p "$bundle_root/packages/mcp-server"
+  cp -R "$CLAUDE_DESKTOP_PAYLOAD_ROOT" "$bundle_root/packages/mcp-server/claude-desktop-extension-payload"
 
   mkdir -p "$bundle_root/packages/design-importer/target/release"
   cp "$importer_source" "$bundle_root/packages/design-importer/target/release/design-importer"
@@ -408,6 +423,8 @@ if [[ "$DO_BUILD" -eq 1 ]]; then
 else
   ensure_shared_runtime_artifacts
 fi
+
+prepare_claude_desktop_payload
 
 for arch in "${SELECTED_ARCHES[@]}"; do
   if [[ "$DO_BUILD" -eq 1 ]]; then

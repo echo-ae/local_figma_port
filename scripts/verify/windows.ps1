@@ -3,6 +3,7 @@ param(
     [switch]$Codex,
     [switch]$CodexApp,
     [switch]$ClaudeCode,
+    [switch]$ClaudeDesktop,
     [switch]$Cursor,
     [switch]$All,
     [string]$ProjectRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
@@ -12,6 +13,7 @@ param(
     [string]$CodexAppData = $(if ($env:CODEX_APP_DATA_DIR) { $env:CODEX_APP_DATA_DIR } elseif ($env:APPDATA) { Join-Path $env:APPDATA "Codex" } else { Join-Path $env:USERPROFILE "AppData/Roaming/Codex" }),
     [string]$CodexAppExe = $(if ($env:CODEX_APP_EXE) { $env:CODEX_APP_EXE } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "Programs/Codex/Codex.exe" } else { Join-Path $env:USERPROFILE "AppData/Local/Programs/Codex/Codex.exe" }),
     [string]$ClaudeHome = $(if ($env:CLAUDE_HOME) { $env:CLAUDE_HOME } else { Join-Path $env:USERPROFILE ".claude" }),
+    [string]$ClaudeDesktopConfig = $(if ($env:CLAUDE_DESKTOP_CONFIG) { $env:CLAUDE_DESKTOP_CONFIG } elseif ($env:APPDATA) { Join-Path $env:APPDATA "Claude/claude_desktop_config.json" } else { Join-Path $env:USERPROFILE "AppData/Roaming/Claude/claude_desktop_config.json" }),
     [string]$CursorHome = (Join-Path $env:USERPROFILE ".cursor")
 )
 
@@ -60,7 +62,8 @@ function Check-JsonServer {
         [string]$RepoSqliteBin,
         [string]$RepoSqlite,
         [string]$RepoData,
-        [string]$Label
+        [string]$Label,
+        [string]$ExpectedCommand = "node"
     )
 
     if (-not (Test-Path $Path)) {
@@ -75,7 +78,7 @@ function Check-JsonServer {
         return
     }
 
-    if ($server.command -ne "node") {
+    if ($server.command -ne $ExpectedCommand) {
         Fail $Label
         return
     }
@@ -115,6 +118,133 @@ function Check-SqliteFts5 {
     Ok $Label
 }
 
+function Check-ClaudeAgentRegistered {
+    param([string]$Label)
+
+    $agentPath = Join-Path $ClaudeHome "agents/local-figma-port.md"
+    Check-Contains -Path $agentPath -Needle "name: local-figma-port" -Label "Claude Code subagent file installed"
+    Ok $Label
+}
+
+function Check-ClaudeUserMcpServer {
+    param([string]$Label)
+
+    $claudeCli = Get-Command "claude" -ErrorAction SilentlyContinue
+    if (-not $claudeCli) {
+        $candidates = @(
+            (Join-Path $env:USERPROFILE ".local/bin/claude"),
+            (Join-Path $env:USERPROFILE ".local/bin/claude.cmd"),
+            (Join-Path $env:USERPROFILE ".local/bin/claude.exe"),
+            (Join-Path $env:USERPROFILE ".local/bin/claude.bat"),
+            (Join-Path $env:USERPROFILE ".local/bin/claude.ps1"),
+            (Join-Path $env:USERPROFILE ".claude/local/claude"),
+            (Join-Path $env:USERPROFILE ".claude/local/claude.exe"),
+            (Join-Path $env:USERPROFILE ".claude/local/claude.cmd"),
+            (Join-Path $env:LOCALAPPDATA "Microsoft/WinGet/Links/claude.exe"),
+            (Join-Path $env:LOCALAPPDATA "Microsoft/WinGet/Links/claude.cmd"),
+            (Join-Path $env:APPDATA "npm/claude.cmd"),
+            (Join-Path $env:APPDATA "npm/claude.exe"),
+            (Join-Path $env:APPDATA "npm/claude"),
+            (Join-Path $env:USERPROFILE "AppData/Roaming/npm/claude.cmd"),
+            (Join-Path $env:USERPROFILE "AppData/Roaming/npm/claude.exe"),
+            (Join-Path $env:USERPROFILE "AppData/Roaming/npm/claude")
+        )
+        foreach ($candidate in $candidates) {
+            if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate -PathType Leaf)) {
+                $claudeCli = [pscustomobject]@{ Source = $candidate }
+                break
+            }
+        }
+    }
+    if (-not $claudeCli) {
+        Fail "$Label (missing command: claude)"
+        return
+    }
+
+    $output = (& $claudeCli.Source mcp get local-figma-port --scope user 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        Fail "$Label (claude mcp get failed)"
+        return
+    }
+
+    $expected = @(
+        (To-PosixPath $RepoMcpEntry),
+        (To-PosixPath $RepoSqliteBin),
+        (To-PosixPath $RepoSqlite),
+        (To-PosixPath $RepoData)
+    )
+    foreach ($needle in $expected) {
+        if (-not $output.Contains($needle)) {
+            Fail $Label
+            return
+        }
+    }
+
+    Ok $Label
+}
+
+function Check-ClaudeDesktopBundle {
+    param([string]$Label)
+
+    $bundlePath = Get-LfpClaudeDesktopBundlePath -StateDir $StateDir
+    if (-not (Test-Path $bundlePath -PathType Leaf)) {
+        Fail "$Label (missing file: $bundlePath)"
+        return
+    }
+
+    $extractRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("local-figma-port-claude-desktop-verify-" + [guid]::NewGuid().ToString("N"))
+    try {
+        Expand-Archive -LiteralPath $bundlePath -DestinationPath $extractRoot -Force
+        $manifestPath = Join-Path $extractRoot "manifest.json"
+        $serverEntry = Join-Path $extractRoot "server/mcp-stdio.js"
+        $schemaPath = Join-Path $extractRoot "schemas/mcp-tools.v1.schema.json"
+
+        if (-not (Test-Path $manifestPath -PathType Leaf)) {
+            Fail "$Label (missing manifest.json)"
+            return
+        }
+        if (-not (Test-Path $serverEntry -PathType Leaf)) {
+            Fail "$Label (missing server/mcp-stdio.js)"
+            return
+        }
+        if (-not (Test-Path $schemaPath -PathType Leaf)) {
+            Fail "$Label (missing schemas/mcp-tools.v1.schema.json)"
+            return
+        }
+
+        $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json -AsHashtable
+        $server = $manifest.server
+        if ($null -eq $server -or $server.type -ne "node" -or $server.entry_point -ne "server/mcp-stdio.js") {
+            Fail $Label
+            return
+        }
+
+        $mcpConfig = $server.mcp_config
+        if ($null -eq $mcpConfig -or $mcpConfig.command -ne "node") {
+            Fail $Label
+            return
+        }
+        if ($mcpConfig.args.Count -lt 1 -or $mcpConfig.args[0] -ne '${__dirname}/server/mcp-stdio.js') {
+            Fail $Label
+            return
+        }
+        if (
+            $mcpConfig.env.SQLITE3_BIN -ne (To-PosixPath $RepoSqliteBin) -or
+            $mcpConfig.env.SQLITE_PATH -ne (To-PosixPath $RepoSqlite) -or
+            $mcpConfig.env.DATA_DIR -ne (To-PosixPath $RepoData)
+        ) {
+            Fail $Label
+            return
+        }
+
+        Ok $Label
+    } finally {
+        if (Test-Path $extractRoot) {
+            Remove-Item $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Check-CodexSharedConfig {
     param([string]$LabelPrefix)
 
@@ -135,10 +265,11 @@ if ($All) {
     $Codex = $true
     $CodexApp = $true
     $ClaudeCode = $true
+    $ClaudeDesktop = $true
     $Cursor = $true
 }
 
-if (-not ($Codex -or $CodexApp -or $ClaudeCode -or $Cursor)) {
+if (-not ($Codex -or $CodexApp -or $ClaudeCode -or $ClaudeDesktop -or $Cursor)) {
     $Codex = $true
     $ClaudeCode = $true
     $Cursor = $true
@@ -162,9 +293,8 @@ $RepoMcpNodeModules = Join-Path $ProjectRoot "packages/mcp-server/node_modules"
 $RepoImporterExe = Join-Path $ProjectRoot "packages/design-importer/target/release/design-importer.exe"
 $RepoPluginEntry = Join-Path $ProjectRoot "packages/figma-exporter-plugin/dist/main.js"
 $RepoPluginManifest = Join-Path $ProjectRoot "packages/figma-exporter-plugin/manifest.json"
+$ClaudeUserConfig = Join-Path (Split-Path -Parent $ClaudeHome) ".claude.json"
 
-$AgentsMarkerStart = "<!-- FIGMA PORT MANAGED BLOCK START -->"
-$AgentsMarkerEnd = "<!-- FIGMA PORT MANAGED BLOCK END -->"
 $ClaudeMarkerStart = "<!-- FIGMA PORT CLAUDE BLOCK START -->"
 $CodexTomlMarkerStart = "# >>> FIGMA PORT MCP START >>>"
 
@@ -208,9 +338,6 @@ Check-SqliteFts5 -Path $RepoSqliteBin -Label "bundled sqlite3.exe supports FTS5"
 
 if ($Codex) {
     Check-CodexSharedConfig -LabelPrefix "Codex"
-    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle '$Local Figma Port' -Label "AGENTS.md advertises `$Local Figma Port`"
-    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle $AgentsMarkerStart -Label "AGENTS.md has managed skill block"
-    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle (To-PosixPath $RepoSkill) -Label "AGENTS.md points at repo skill"
 }
 
 if ($CodexApp) {
@@ -228,24 +355,20 @@ if ($CodexApp) {
         Ok "Codex App installation detected"
     }
     Check-CodexSharedConfig -LabelPrefix "Codex App"
-    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle '$Local Figma Port' -Label "Codex App alias is exposed through AGENTS.md"
-    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle $AgentsMarkerStart -Label "Codex App AGENTS.md has managed skill block"
-    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle (To-PosixPath $RepoSkill) -Label "Codex App AGENTS.md points at repo skill"
 }
 
 if ($ClaudeCode) {
     Check-Contains -Path (Join-Path $ClaudeHome "skills/local-figma-port/SKILL.md") -Needle "name: local-figma-port" -Label "Claude Code skill installed"
-    Check-JsonServer -Path (Join-Path $ConfigRoot ".mcp.json") -RepoMcpEntry $RepoMcpEntry -RepoSqliteBin $RepoSqliteBin -RepoSqlite $RepoSqlite -RepoData $RepoData -Label "Claude project MCP config points at repo build"
-    Check-Contains -Path (Join-Path $ConfigRoot "CLAUDE.md") -Needle $ClaudeMarkerStart -Label "CLAUDE.md has managed skill block"
-    Check-Contains -Path (Join-Path $ConfigRoot "CLAUDE.md") -Needle '$Local Figma Port' -Label "CLAUDE.md advertises `$Local Figma Port`"
-    Check-Contains -Path (Join-Path $ConfigRoot "CLAUDE.md") -Needle (To-PosixPath $RepoSkill) -Label "CLAUDE.md points at repo skill"
+    Check-ClaudeAgentRegistered -Label "Claude Code subagent is registered"
+    Check-ClaudeUserMcpServer -Label "Claude Code user MCP config points at repo build"
+}
+
+if ($ClaudeDesktop) {
+    Check-ClaudeDesktopBundle -Label "Claude Desktop extension bundle points at repo build"
 }
 
 if ($Cursor) {
-    Check-JsonServer -Path (Join-Path $ConfigRoot ".cursor/mcp.json") -RepoMcpEntry $RepoMcpEntry -RepoSqliteBin $RepoSqliteBin -RepoSqlite $RepoSqlite -RepoData $RepoData -Label "Cursor project MCP config points at repo build"
     Check-JsonServer -Path (Join-Path $CursorHome "mcp.json") -RepoMcpEntry $RepoMcpEntry -RepoSqliteBin $RepoSqliteBin -RepoSqlite $RepoSqlite -RepoData $RepoData -Label "Cursor global MCP config points at repo build"
-    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle '$Local Figma Port' -Label "Cursor alias is exposed through AGENTS.md"
-    Check-Contains -Path (Join-Path $ConfigRoot "AGENTS.md") -Needle $AgentsMarkerEnd -Label "AGENTS.md managed block is complete"
 }
 
 if ($script:Failures -gt 0) {

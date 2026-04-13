@@ -3,6 +3,7 @@ param(
     [switch]$Codex,
     [switch]$CodexApp,
     [switch]$ClaudeCode,
+    [switch]$ClaudeDesktop,
     [switch]$Cursor,
     [switch]$All,
     [switch]$UsePrebuilt,
@@ -14,6 +15,7 @@ param(
     [string]$CodexAppData = $(if ($env:CODEX_APP_DATA_DIR) { $env:CODEX_APP_DATA_DIR } elseif ($env:APPDATA) { Join-Path $env:APPDATA "Codex" } else { Join-Path $env:USERPROFILE "AppData/Roaming/Codex" }),
     [string]$CodexAppExe = $(if ($env:CODEX_APP_EXE) { $env:CODEX_APP_EXE } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "Programs/Codex/Codex.exe" } else { Join-Path $env:USERPROFILE "AppData/Local/Programs/Codex/Codex.exe" }),
     [string]$ClaudeHome = $(if ($env:CLAUDE_HOME) { $env:CLAUDE_HOME } else { Join-Path $env:USERPROFILE ".claude" }),
+    [string]$ClaudeDesktopConfig = $(if ($env:CLAUDE_DESKTOP_CONFIG) { $env:CLAUDE_DESKTOP_CONFIG } elseif ($env:APPDATA) { Join-Path $env:APPDATA "Claude/claude_desktop_config.json" } else { Join-Path $env:USERPROFILE "AppData/Roaming/Claude/claude_desktop_config.json" }),
     [string]$CursorHome = (Join-Path $env:USERPROFILE ".cursor")
 )
 
@@ -35,6 +37,7 @@ $StateDir = [System.IO.Path]::GetFullPath($StateDir)
 $RepoSkill = Join-Path $ProjectRoot "SKILL.md"
 $RepoMcpDir = Join-Path $ProjectRoot "packages/mcp-server"
 $RepoMcpPackageJson = Join-Path $RepoMcpDir "package.json"
+$RepoClaudeDesktopPayloadDir = Join-Path $RepoMcpDir "claude-desktop-extension-payload"
 $RepoMcpEntry = Join-Path $ProjectRoot "packages/mcp-server/dist/mcp-stdio.js"
 $RepoMcpHttpEntry = Join-Path $ProjectRoot "packages/mcp-server/dist/index.js"
 $RepoImporterExe = Join-Path $ProjectRoot "packages/design-importer/target/release/design-importer.exe"
@@ -60,9 +63,14 @@ $ProjectData = Join-Path $ProjectRoot "data"
 $RepoData = Join-Path $StateDir "data"
 $RepoSqlite = Join-Path $RepoData "design_store.sqlite"
 $Timestamp = Get-Date -Format "yyyyMMddHHmmss"
+$ClaudeUserConfig = Join-Path (Split-Path -Parent $ClaudeHome) ".claude.json"
+$ClaudeProjectMcpConfig = Join-Path $ConfigRoot ".mcp.json"
+$ClaudeCliPath = ""
+$ClaudeIntegrationMode = ""
+$NodeRuntimePath = ""
+$NodeRuntimeVersion = ""
+$ClaudeDesktopBundleOpenStatus = "not-attempted"
 
-$AgentsMarkerStart = "<!-- FIGMA PORT MANAGED BLOCK START -->"
-$AgentsMarkerEnd = "<!-- FIGMA PORT MANAGED BLOCK END -->"
 $ClaudeMarkerStart = "<!-- FIGMA PORT CLAUDE BLOCK START -->"
 $ClaudeMarkerEnd = "<!-- FIGMA PORT CLAUDE BLOCK END -->"
 $CodexTomlMarkerStart = "# >>> FIGMA PORT MCP START >>>"
@@ -70,23 +78,25 @@ $CodexTomlMarkerEnd = "# <<< FIGMA PORT MCP END <<<"
 
 function Show-Usage {
     @"
-usage: .\scripts\install\windows.ps1 [-Codex] [-ClaudeCode] [-Cursor] [-All]
+usage: .\scripts\install\windows.ps1 [-Codex] [-ClaudeCode] [-ClaudeDesktop] [-Cursor] [-All]
 
 options:
   -Codex                 install for Codex
   -CodexApp              install for Codex App
   -ClaudeCode            install for Claude Code
+  -ClaudeDesktop         install for Claude Desktop
   -Cursor                install for Cursor
   -All                   install for all supported targets
   -UsePrebuilt           install from a prebuilt runtime bundle without local Rust/TypeScript builds
-  -Targets LIST          install for comma-separated target numbers: 1=Codex, 2=Codex App, 3=Claude Code, 4=Cursor
+  -Targets LIST          install for comma-separated target names or numbers: 1=Codex, 2=Codex App, 3=Claude Code, 4=Claude Desktop, 5=Cursor
   -ProjectRoot PATH      override repository root
-  -ConfigRoot PATH       override workspace root for project-local config files (.mcp.json, .cursor/mcp.json, CLAUDE.md, AGENTS.md)
+  -ConfigRoot PATH       override workspace root for legacy project files that may need cleanup
   -StateDir PATH         override Local Figma Port state root
   -CodexHome PATH        override Codex home
   -CodexAppData PATH     override Codex App data dir
   -CodexAppExe PATH      override Codex App executable path
   -ClaudeHome PATH       override Claude home
+  -ClaudeDesktopConfig PATH override legacy Claude Desktop config path for cleanup
   -CursorHome PATH       override Cursor home
 "@
 }
@@ -108,7 +118,11 @@ function Apply-TargetToken {
         "claude" { $script:ClaudeCode = $true; return }
         "claude-code" { $script:ClaudeCode = $true; return }
         "claude_code" { $script:ClaudeCode = $true; return }
-        "4" { $script:Cursor = $true; return }
+        "4" { $script:ClaudeDesktop = $true; return }
+        "claude-desktop" { $script:ClaudeDesktop = $true; return }
+        "claude_desktop" { $script:ClaudeDesktop = $true; return }
+        "claude-desktop-app" { $script:ClaudeDesktop = $true; return }
+        "5" { $script:Cursor = $true; return }
         "cursor" { $script:Cursor = $true; return }
         default { throw "Unknown target token: $Token" }
     }
@@ -120,12 +134,14 @@ function Apply-TargetsCsv {
     $script:Codex = $false
     $script:CodexApp = $false
     $script:ClaudeCode = $false
+    $script:ClaudeDesktop = $false
     $script:Cursor = $false
 
     if ($Csv -match '^\s*all\s*$') {
         $script:Codex = $true
         $script:CodexApp = $true
         $script:ClaudeCode = $true
+        $script:ClaudeDesktop = $true
         $script:Cursor = $true
         return
     }
@@ -170,6 +186,82 @@ function Require-Command {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "Missing required command: $Name"
     }
+}
+
+function Get-NodeRuntimeInfo {
+    $nodeCmd = Get-Command "node" -ErrorAction SilentlyContinue
+    if (-not $nodeCmd) {
+        throw "Missing required command: node"
+    }
+
+    $script:NodeRuntimePath = $nodeCmd.Source
+    $versionOutput = (& $nodeCmd.Source --version 2>$null | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($versionOutput)) {
+        $versionOutput = "unknown"
+    }
+    $script:NodeRuntimeVersion = $versionOutput
+}
+
+function Resolve-ClaudeCli {
+    if (-not [string]::IsNullOrWhiteSpace($script:ClaudeCliPath) -and (Test-Path $script:ClaudeCliPath)) {
+        return $script:ClaudeCliPath
+    }
+
+    $cmd = Get-Command "claude" -ErrorAction SilentlyContinue
+    if ($cmd) {
+        $script:ClaudeCliPath = $cmd.Source
+        return $script:ClaudeCliPath
+    }
+
+    $candidates = @(
+        (Join-Path $env:USERPROFILE ".local/bin/claude"),
+        (Join-Path $env:USERPROFILE ".local/bin/claude.cmd"),
+        (Join-Path $env:USERPROFILE ".local/bin/claude.exe"),
+        (Join-Path $env:USERPROFILE ".local/bin/claude.bat"),
+        (Join-Path $env:USERPROFILE ".local/bin/claude.ps1"),
+        (Join-Path $env:USERPROFILE ".claude/local/claude"),
+        (Join-Path $env:USERPROFILE ".claude/local/claude.exe"),
+        (Join-Path $env:USERPROFILE ".claude/local/claude.cmd"),
+        (Join-Path $env:LOCALAPPDATA "Microsoft/WinGet/Links/claude.exe"),
+        (Join-Path $env:LOCALAPPDATA "Microsoft/WinGet/Links/claude.cmd"),
+        (Join-Path $env:APPDATA "npm/claude.cmd"),
+        (Join-Path $env:APPDATA "npm/claude.exe"),
+        (Join-Path $env:APPDATA "npm/claude"),
+        (Join-Path $env:USERPROFILE "AppData/Roaming/npm/claude.cmd"),
+        (Join-Path $env:USERPROFILE "AppData/Roaming/npm/claude.exe"),
+        (Join-Path $env:USERPROFILE "AppData/Roaming/npm/claude")
+    )
+
+    foreach ($candidate in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate -PathType Leaf)) {
+            $script:ClaudeCliPath = $candidate
+            return $script:ClaudeCliPath
+        }
+    }
+
+    throw "Claude Code CLI not found. Install Claude Code so the 'claude' command is available, then re-run the installer."
+}
+
+function Resolve-ClaudeCliIfPresent {
+    try {
+        return (Resolve-ClaudeCli)
+    } catch {
+        return $null
+    }
+}
+
+function Resolve-ClaudeIntegrationMode {
+    if (-not [string]::IsNullOrWhiteSpace($script:ClaudeIntegrationMode)) {
+        return $script:ClaudeIntegrationMode
+    }
+
+    $cli = Resolve-ClaudeCliIfPresent
+    if ($cli) {
+        $script:ClaudeIntegrationMode = "code"
+    } else {
+        $script:ClaudeIntegrationMode = "desktop"
+    }
+    return $script:ClaudeIntegrationMode
 }
 
 function Ensure-MsvcLinkerAvailable {
@@ -355,12 +447,11 @@ function Write-WithBackup {
     Write-Host "[install-windows] wrote: $Path"
 }
 
-function Set-MarkdownManagedBlock {
+function Remove-MarkdownManagedBlock {
     param(
         [string]$Path,
         [string]$StartMarker,
-        [string]$EndMarker,
-        [string]$Block
+        [string]$EndMarker
     )
 
     $baseText = ""
@@ -368,13 +459,15 @@ function Set-MarkdownManagedBlock {
         $baseText = Remove-ManagedBlockText -Text (Get-Content -Raw $Path) -StartMarker $StartMarker -EndMarker $EndMarker
     }
 
-    $newText = if ([string]::IsNullOrWhiteSpace($baseText)) {
-        "$StartMarker`n$Block`n$EndMarker`n"
-    } else {
-        "$baseText`n`n$StartMarker`n$Block`n$EndMarker`n"
+    if ([string]::IsNullOrWhiteSpace($baseText)) {
+        if (Test-Path $Path) {
+            Remove-Item -LiteralPath $Path -Force
+            Write-Host "[install-windows] removed: $Path"
+        }
+        return
     }
 
-    Write-WithBackup -Path $Path -Content $newText
+    Write-WithBackup -Path $Path -Content ($baseText.TrimEnd() + "`n")
 }
 
 function Set-CodexTomlBlock {
@@ -418,10 +511,13 @@ function Set-CodexTomlBlock {
 }
 
 function Set-JsonMcpFile {
-    param([string]$Path)
+    param(
+        [string]$Path,
+        [string]$Command = "node"
+    )
 
     $server = @{
-        command = "node"
+        command = $Command
         args = @((To-PosixPath $RepoMcpEntry))
         env = @{
             SQLITE3_BIN = (To-PosixPath $RepoSqliteBin)
@@ -448,8 +544,41 @@ function Set-JsonMcpFile {
     Write-WithBackup -Path $Path -Content ($json + "`n")
 }
 
+function Remove-JsonMcpServer {
+    param([string]$Path)
+
+    $payload = @{}
+    if (Test-Path $Path) {
+        $raw = Get-Content -Raw $Path
+        if (-not [string]::IsNullOrWhiteSpace($raw)) {
+            $payload = $raw | ConvertFrom-Json -AsHashtable
+        }
+    }
+
+    if (-not ($payload -is [System.Collections.IDictionary])) {
+        $payload = @{}
+    }
+    if ($payload.ContainsKey("mcpServers") -and $payload.mcpServers -is [System.Collections.IDictionary]) {
+        $payload.mcpServers.Remove("local-figma-port") | Out-Null
+        $payload.mcpServers.Remove("design_local") | Out-Null
+        if ($payload.mcpServers.Count -eq 0) {
+            $payload.Remove("mcpServers") | Out-Null
+        }
+    }
+
+    if ($payload.Count -eq 0) {
+        if (Test-Path $Path) {
+            Remove-Item -LiteralPath $Path -Force
+            Write-Host "[install-windows] removed: $Path"
+        }
+        return
+    }
+
+    Write-WithBackup -Path $Path -Content (($payload | ConvertTo-Json -Depth 8) + "`n")
+}
+
 function Ensure-McpRuntime {
-    Require-Command -Name "node"
+    Get-NodeRuntimeInfo
     Require-Command -Name "npm"
 
     if ($UsePrebuilt) {
@@ -572,12 +701,91 @@ function Show-FigmaPluginManifestInstructions {
     Write-Host ""
 }
 
-function Test-ProjectJsonConfigs {
+function Show-AgentMcpDiagnostic {
+    param(
+        [string]$AgentLabel,
+        [string]$ConfigPath
+    )
+
+    Write-Host "[install-windows] MCP diagnostics for $AgentLabel"
+    Write-Host "  - config: $ConfigPath"
+    Write-Host "  - command: node"
+}
+
+function Show-ClaudeDesktopExtensionDiagnostic {
+    $bundlePath = Get-LfpClaudeDesktopBundlePath -StateDir $StateDir
+    $border = "=============================================================================="
+
+    Write-Host ""
+    Write-Host $border
+    Write-Host "  Claude Desktop extension"
+    Write-Host $border
+    Write-Host "  Bundle:"
+    Write-Host ""
+    Write-Host "  $bundlePath"
+    Write-Host ""
+    if ($script:ClaudeDesktopBundleOpenStatus -eq "opened") {
+        Write-Host "  The installer asked Windows to open this .mcpb file now."
+        Write-Host "  If Claude Desktop was closed, Windows may launch it for you."
+        Write-Host ""
+        Write-Host "  If no install dialog appeared, install it manually:"
+    } else {
+        Write-Host "  Automatic opening did not succeed. Install it manually:"
+    }
+    Write-Host ""
+    Write-Host "  Claude Desktop: Settings -> Extensions -> Install extension from file..."
+    Write-Host "  Choose: $bundlePath"
+    Write-Host "  Enable the extension, then start a new Claude Desktop chat."
+    Write-Host $border
+}
+
+function Show-AgentRestartNotes {
+    if ($CodexApp) {
+        Write-Host "[install-windows] note: restart Codex App if it was already open so the MCP server appears in Settings."
+    }
     if ($ClaudeCode) {
-        Test-JsonFileIfPresent -Path (Join-Path $ConfigRoot ".mcp.json") -Label "Claude project MCP config"
+        Write-Host "[install-windows] note: restart Claude Code if it was already open."
     }
     if ($Cursor) {
-        Test-JsonFileIfPresent -Path (Join-Path $ConfigRoot ".cursor/mcp.json") -Label "Cursor project MCP config"
+        Write-Host "[install-windows] note: restart Cursor if it was already open."
+    }
+}
+
+function Show-PostInstallDiagnostics {
+    Write-Host ""
+    if ($Codex) {
+        Show-AgentMcpDiagnostic -AgentLabel "Codex" -ConfigPath (Join-Path $CodexHome "config.toml")
+    }
+    if ($CodexApp) {
+        Show-AgentMcpDiagnostic -AgentLabel "Codex App" -ConfigPath (Join-Path $CodexHome "config.toml")
+    }
+    if ($ClaudeCode) {
+        Show-AgentMcpDiagnostic -AgentLabel "Claude Code" -ConfigPath ("user scope via {0}" -f $ClaudeCliPath)
+    }
+    if ($ClaudeDesktop) {
+        Show-ClaudeDesktopExtensionDiagnostic
+    }
+    if ($Cursor) {
+        Show-AgentMcpDiagnostic -AgentLabel "Cursor" -ConfigPath (Join-Path $CursorHome "mcp.json")
+    }
+    Show-AgentRestartNotes
+}
+
+function Open-ClaudeDesktopExtensionBundle {
+    $bundlePath = Get-LfpClaudeDesktopBundlePath -StateDir $StateDir
+    if (-not (Test-Path $bundlePath -PathType Leaf)) {
+        $script:ClaudeDesktopBundleOpenStatus = "manual"
+        return
+    }
+
+    # Windows does not always register a .mcpb file association for Claude
+    # Desktop. Launching the bundle directly can surface the generic "Open with"
+    # chooser instead of the extension installer flow, so keep this step manual.
+    $script:ClaudeDesktopBundleOpenStatus = "manual"
+}
+
+function Test-ProjectJsonConfigs {
+    if ($Cursor) {
         Test-JsonFileIfPresent -Path (Join-Path $CursorHome "mcp.json") -Label "Cursor global MCP config"
     }
 }
@@ -641,30 +849,118 @@ interface:
     Write-WithBackup -Path $interfaceTarget -Content $interfaceContent
 }
 
-function Render-AgentsBlock {
-    return @'
-## Local Figma Port
+function Set-ClaudeUserSubagent {
+    $agentTarget = Join-Path $ClaudeHome "agents/local-figma-port.md"
+    $skillPath = To-PosixPath (Join-Path $ClaudeHome "skills/local-figma-port/SKILL.md")
+    $agentContent = @'
+---
+name: local-figma-port
+description: Use proactively when implementing UI from Local Figma Port MCP context or when troubleshooting this MCP workflow.
+---
 
-### Available skills
-- Local Figma Port: Use when implementing UI from this repository's `local-figma-port` MCP server where nested descendants, partial node reads, or ambiguous style ownership could cause the agent to stop early and guess instead of fully tracing the design source. (file: {0})
+You are the Local Figma Port specialist for Claude Code.
 
-### How to use skills
-- If the user names this skill with `$Local Figma Port` or plain text `Local Figma Port`, you must use it for that turn.
-- Read the skill file above and follow it directly.
-- Treat `Local Figma Port` as the canonical human-facing alias for this repository skill.
-'@ -f (To-PosixPath $RepoSkill)
+When the user asks for Local Figma Port, Figma implementation fidelity, or MCP troubleshooting:
+- Follow the skill at `{0}`.
+- Prefer the `local-figma-port` MCP server over guessing from partial context.
+- Use the exported design context end-to-end before concluding work.
+'@ -f $skillPath
+
+    Write-WithBackup -Path $agentTarget -Content $agentContent
 }
 
-function Render-ClaudeBlock {
-    return @'
-## Local Figma Port
+function Set-ClaudeUserMcpServer {
+    $claudeCli = Resolve-ClaudeCli
+    & $claudeCli mcp remove local-figma-port --scope user | Out-Null
+    & $claudeCli mcp add local-figma-port --scope user `
+        --env ("SQLITE3_BIN={0}" -f (To-PosixPath $RepoSqliteBin)) `
+        --env ("SQLITE_PATH={0}" -f (To-PosixPath $RepoSqlite)) `
+        --env ("DATA_DIR={0}" -f (To-PosixPath $RepoData)) `
+        -- node (To-PosixPath $RepoMcpEntry) | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "claude mcp add failed for user-scoped local-figma-port"
+    }
+}
 
-When the user mentions `$Local Figma Port` or `Local Figma Port`, use the skill at `{0}`.
+function Set-ClaudeDesktopExtensionBundle {
+    $bundlePath = Get-LfpClaudeDesktopBundlePath -StateDir $StateDir
+    $stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("local-figma-port-claude-desktop-" + [guid]::NewGuid().ToString("N"))
+    $extensionRoot = Join-Path $stagingRoot "extension"
+    $mcpVersion = ((Get-Content -Raw $RepoMcpPackageJson | ConvertFrom-Json).version)
 
-Use this skill for:
-- exact implementation from this repository's `local-figma-port` MCP server;
-- setup or troubleshooting of the Local Figma Port workflow itself.
-'@ -f (To-PosixPath $RepoSkill)
+    try {
+        New-Item -ItemType Directory -Force -Path $extensionRoot | Out-Null
+        $payloadManifest = Join-Path $RepoClaudeDesktopPayloadDir "package.json"
+        $payloadServer = Join-Path $RepoClaudeDesktopPayloadDir "server/mcp-stdio.js"
+        $payloadSchema = Join-Path $RepoClaudeDesktopPayloadDir "schemas/mcp-tools.v1.schema.json"
+        $payloadNodeModules = Join-Path $RepoClaudeDesktopPayloadDir "node_modules"
+        $hasPrebuiltPayload = (Test-Path $payloadManifest -PathType Leaf) -and (Test-Path $payloadServer -PathType Leaf) -and (Test-Path $payloadSchema -PathType Leaf) -and (Test-Path $payloadNodeModules -PathType Container)
+
+        if ($hasPrebuiltPayload) {
+            Copy-Item -Path (Join-Path $RepoClaudeDesktopPayloadDir "*") -Destination $extensionRoot -Recurse -Force
+            Write-Host "[install-windows] using prebuilt Claude Desktop extension payload at $RepoClaudeDesktopPayloadDir"
+        } else {
+            New-Item -ItemType Directory -Force -Path (Join-Path $extensionRoot "server") | Out-Null
+            Copy-Item -Path (Join-Path $RepoMcpDir "dist/*") -Destination (Join-Path $extensionRoot "server") -Recurse -Force
+            Copy-Item -Path (Join-Path $ProjectRoot "schemas") -Destination (Join-Path $extensionRoot "schemas") -Recurse -Force
+            Copy-Item -Path $RepoMcpPackageJson -Destination (Join-Path $extensionRoot "package.json") -Force
+            Push-Location $extensionRoot
+            try {
+                & npm install --omit=dev --no-package-lock | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "npm install failed while preparing Claude Desktop extension runtime dependencies"
+                }
+            } finally {
+                Pop-Location
+            }
+            Write-Host "[install-windows] built Claude Desktop extension payload locally"
+        }
+
+        $manifest = [ordered]@{
+            manifest_version = "0.3"
+            name             = "local-figma-port"
+            display_name     = "Local Figma Port"
+            version          = $mcpVersion
+            description      = "Read Local Figma Port design exports from Claude Desktop."
+            long_description = "Local-first MCP access to the Local Figma Port design store. Start the Local Figma Port runtime, export from the Figma Desktop plugin, then use this extension inside Claude Desktop."
+            author           = [ordered]@{
+                name = "echo-ae"
+            }
+            documentation    = "https://github.com/echo-ae/local_figma_port#readme"
+            support          = "https://github.com/echo-ae/local_figma_port/issues"
+            repository       = [ordered]@{
+                type = "git"
+                url  = "https://github.com/echo-ae/local_figma_port.git"
+            }
+            tools_generated  = $true
+            server           = [ordered]@{
+                type        = "node"
+                entry_point = "server/mcp-stdio.js"
+                mcp_config  = [ordered]@{
+                    command = "node"
+                    args    = @('${__dirname}/server/mcp-stdio.js')
+                    env     = [ordered]@{
+                        SQLITE3_BIN = (To-PosixPath $RepoSqliteBin)
+                        SQLITE_PATH = (To-PosixPath $RepoSqlite)
+                        DATA_DIR    = (To-PosixPath $RepoData)
+                    }
+                }
+            }
+        }
+
+        Set-Content -Path (Join-Path $extensionRoot "manifest.json") -Value (($manifest | ConvertTo-Json -Depth 10) + "`n") -NoNewline:$false
+
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $bundlePath) | Out-Null
+        if (Test-Path $bundlePath) {
+            Remove-Item $bundlePath -Force
+        }
+        Compress-Archive -Path (Join-Path $extensionRoot "*") -DestinationPath $bundlePath -Force
+        Write-Host "[install-windows] wrote: $bundlePath"
+    } finally {
+        if (Test-Path $stagingRoot) {
+            Remove-Item $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Render-CodexTomlBlock {
@@ -683,9 +979,10 @@ function Show-InteractiveSelection {
         Write-Host "  [1] Codex"
         Write-Host "  [2] Codex App"
         Write-Host "  [3] Claude Code"
-        Write-Host "  [4] Cursor"
+        Write-Host "  [4] Claude Desktop"
+        Write-Host "  [5] Cursor"
         Write-Host ""
-        Write-Host "Enter numbers separated by commas, or use 'all'. Example: 1,2,4"
+        Write-Host "Enter numbers separated by commas, or use 'all'. Example: 1,2,5"
         $choice = Read-Host "> "
         if ([string]::IsNullOrWhiteSpace($choice)) {
             $choice = "all"
@@ -696,7 +993,7 @@ function Show-InteractiveSelection {
             Write-Warning $_.Exception.Message
             continue
         }
-        if (-not ($Codex -or $CodexApp -or $ClaudeCode -or $Cursor)) {
+        if (-not ($Codex -or $CodexApp -or $ClaudeCode -or $ClaudeDesktop -or $Cursor)) {
             Write-Warning "Select at least one target."
             continue
         }
@@ -708,6 +1005,7 @@ if ($All) {
     $Codex = $true
     $CodexApp = $true
     $ClaudeCode = $true
+    $ClaudeDesktop = $true
     $Cursor = $true
 }
 
@@ -715,7 +1013,7 @@ if (-not [string]::IsNullOrWhiteSpace($Targets)) {
     Apply-TargetsCsv -Csv $Targets
 }
 
-$explicitSelection = $Codex -or $CodexApp -or $ClaudeCode -or $Cursor
+$explicitSelection = $Codex -or $CodexApp -or $ClaudeCode -or $ClaudeDesktop -or $Cursor
 if (-not $explicitSelection) {
     Show-InteractiveSelection
 }
@@ -738,6 +1036,7 @@ Write-Host "[install-windows] summary"
 if ($Codex) { Write-Host "  - Codex" }
 if ($CodexApp) { Write-Host "  - Codex App" }
 if ($ClaudeCode) { Write-Host "  - Claude Code" }
+if ($ClaudeDesktop) { Write-Host "  - Claude Desktop" }
 if ($Cursor) { Write-Host "  - Cursor" }
 Write-Host "  - project root: $ProjectRoot"
 if ($ConfigRoot -ne $ProjectRoot) {
@@ -762,18 +1061,23 @@ if ($Codex -or $CodexApp) {
 }
 
 if ($ClaudeCode) {
+    Resolve-ClaudeCli | Out-Null
     Copy-SkillFile -TargetDir (Join-Path $ClaudeHome "skills/local-figma-port")
-    Set-JsonMcpFile -Path (Join-Path $ConfigRoot ".mcp.json")
-    Set-MarkdownManagedBlock -Path (Join-Path $ConfigRoot "CLAUDE.md") -StartMarker $ClaudeMarkerStart -EndMarker $ClaudeMarkerEnd -Block (Render-ClaudeBlock)
+    Set-ClaudeUserSubagent
+    Set-ClaudeUserMcpServer
+    Remove-JsonMcpServer -Path $ClaudeUserConfig
+    Remove-JsonMcpServer -Path $ClaudeProjectMcpConfig
+    Remove-MarkdownManagedBlock -Path (Join-Path $ConfigRoot "CLAUDE.md") -StartMarker $ClaudeMarkerStart -EndMarker $ClaudeMarkerEnd
 }
 
-if ($Codex -or $CodexApp -or $Cursor) {
-    Set-MarkdownManagedBlock -Path (Join-Path $ConfigRoot "AGENTS.md") -StartMarker $AgentsMarkerStart -EndMarker $AgentsMarkerEnd -Block (Render-AgentsBlock)
+if ($ClaudeDesktop) {
+    Set-ClaudeDesktopExtensionBundle
+    Remove-JsonMcpServer -Path $ClaudeDesktopConfig
 }
 
 if ($Cursor) {
-    Set-JsonMcpFile -Path (Join-Path $ConfigRoot ".cursor/mcp.json")
     Set-JsonMcpFile -Path (Join-Path $CursorHome "mcp.json")
+    Remove-JsonMcpServer -Path (Join-Path $ConfigRoot ".cursor/mcp.json")
 }
 
 $verifyParams = @{
@@ -791,12 +1095,14 @@ if ($CodexApp) {
     $verifyParams.CodexAppExe = $CodexAppExe
 }
 if ($ClaudeCode) { $verifyParams.ClaudeCode = $true }
+if ($ClaudeDesktop) { $verifyParams.ClaudeDesktop = $true }
 if ($Cursor) { $verifyParams.Cursor = $true }
 
 & (Join-Path $ProjectRoot "scripts/verify/windows.ps1") @verifyParams
 & (Join-Path $ProjectRoot "scripts/runtime/start.ps1") -ProjectRoot $ProjectRoot -StateDir $StateDir -DataDir $RepoData -SqlitePath $RepoSqlite -ImporterExe $RepoImporterExe -McpPort $(if ($env:MCP_PORT) { [int]$env:MCP_PORT } else { 7331 })
-if ($CodexApp) {
-    Write-Host "[install-windows] note: Codex App reads ~/.codex/config.toml; restart the app if it was already open."
+if ($ClaudeDesktop) {
+    Open-ClaudeDesktopExtensionBundle
 }
 Show-FigmaPluginManifestInstructions
+Show-PostInstallDiagnostics
 Write-Host "[install-windows] install complete"

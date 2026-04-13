@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("", "codex", "codex-app", "claude-code", "cursor")]
+    [ValidateSet("", "codex", "codex-app", "claude-code", "claude-desktop", "cursor")]
     [string]$Target = "",
     [ValidateSet("", "amd64", "arm64")]
     [string]$Architecture = "",
@@ -117,7 +117,8 @@ function Get-LfpTargetChoice {
         Write-Host "  [1] Codex"
         Write-Host "  [2] Codex App"
         Write-Host "  [3] Claude Code"
-        Write-Host "  [4] Cursor"
+        Write-Host "  [4] Claude Desktop"
+        Write-Host "  [5] Cursor"
         Write-Host ""
         $choice = Read-Host "> "
         switch ($choice.Trim().ToLowerInvariant()) {
@@ -130,7 +131,11 @@ function Get-LfpTargetChoice {
             "claude" { return "claude-code" }
             "claude-code" { return "claude-code" }
             "claude_code" { return "claude-code" }
-            "4" { return "cursor" }
+            "4" { return "claude-desktop" }
+            "claude-desktop" { return "claude-desktop" }
+            "claude_desktop" { return "claude-desktop" }
+            "claude-desktop-app" { return "claude-desktop" }
+            "5" { return "cursor" }
             "cursor" { return "cursor" }
             default { Write-Warning "Unknown choice: $choice" }
         }
@@ -141,10 +146,11 @@ function Get-LfpTargetToken {
     param([string]$Name)
 
     switch ($Name) {
-        "codex" { return "1" }
-        "codex-app" { return "2" }
-        "claude-code" { return "3" }
-        "cursor" { return "4" }
+        "codex" { return "codex" }
+        "codex-app" { return "codex-app" }
+        "claude-code" { return "claude-code" }
+        "claude-desktop" { return "claude-desktop" }
+        "cursor" { return "cursor" }
         default { throw "Unknown target: $Name" }
     }
 }

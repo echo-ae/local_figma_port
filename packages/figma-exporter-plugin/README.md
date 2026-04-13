@@ -41,9 +41,15 @@ npm run build
 
 1. Open Figma Desktop.
 2. `Plugins` -> `Development` -> `Import plugin from manifest...`
-3. Select:
+3. Select the manifest path for your install mode:
+
+- checked-out repository:
 
 `<repo-root>/packages/figma-exporter-plugin/manifest.json`
+
+- bootstrap/release install:
+
+use the manifest path printed by the installer
 
 4. Run from `Plugins` -> `Development` -> `Local Figma Port`.
 
@@ -51,7 +57,8 @@ npm run build
 
 - Default flow: plugin sends bundle directly to:
   - `http://127.0.0.1:7331/import-bundle`
-- MCP server stores bundle into:
+- In checked-out repository installs, the default landing zones are:
   - `<repo-root>/imports/plugin-export.bundle.json` (`Design element`)
   - `<repo-root>/import-ui-kit/plugin-export.bundle.json` (`UI-kit`)
+- In bootstrap/release installs, the runtime uses the installed bundle and state directories instead of the repository root, so rely on the installer/runtime paths rather than assuming `<repo-root>`
 - If auto-send fails, use fallback button `Download Bundle JSON`.

@@ -4,8 +4,8 @@ A local-first bridge between Figma and AI coding agents.
 
 Local Figma Port connects Figma design data directly to AI coding tools.
 
-It gives agents like Codex, Claude Code, and Cursor direct access to normalized design data
-(frames, components, styles) — without manual export.
+It gives agents like Codex, Claude Code, Claude Desktop, and Cursor direct access to normalized design data
+(frames, components, styles) — without manual JSON handoff or copy-paste from Figma.
 
 It does not require a paid Figma account or Figma Dev Mode.
 
@@ -20,7 +20,7 @@ It does not require a paid Figma account or Figma Dev Mode.
 1. Install the tool
 2. Start the local server
 3. In Figma, import the plugin via `manifest.json` (see below), then export a node
-4. In your coding agent, use the shortcut `$Local Figma Port` followed by your prompt
+4. In your coding agent, use the Local Figma Port integration for your target environment
 
 Takes under 2 minutes.
 
@@ -30,32 +30,41 @@ To use the Local Figma Port plugin in Figma:
 
 1. Open Figma Desktop
 2. Go to `Plugins → Development → Import plugin from manifest...`
-3. Select `packages/figma-exporter-plugin/manifest.json`
-4. Run `Plugins → Development → Local Figma Port`
+3. Select the manifest path printed by the installer
+4. For checked-out repository installs, that path is `packages/figma-exporter-plugin/manifest.json`
+5. Run `Plugins → Development → Local Figma Port`
 
 You can now select a node and export it from Figma using the plugin.
 
 Requires Figma Desktop (plugin development mode is not available in the browser).
 
-## Using the Skill
+## Using Local Figma Port
 
 After exporting a design slice, the context becomes available to your coding agent.
 
-Use the Local Figma Port skill in your agent:
+How you invoke it depends on the agent:
 
-`$Local Figma Port implement this screen in React`
-
-The shortcut tells the agent to use the exported Local Figma Port context instead of guessing from scratch.
+- `Codex / Codex App`: use the shortcut `$Local Figma Port`, for example `$Local Figma Port implement this screen in React`
+- `Claude Code`: the `claude` CLI must be installed; use the `local-figma-port` subagent or ask Claude Code to use the `local-figma-port` MCP server
+- `Claude Desktop`: install and enable the `Local Figma Port` extension in `Settings -> Extensions`, then start a new chat and ask Claude to use the Local Figma Port tools
+- `Cursor`: ask Cursor to use the `local-figma-port` MCP server or the Local Figma Port tools for the current task
 
 The more specific your prompt, the better the result will be.
 
-You can combine it with any prompt:
+Notes:
+- `Claude Desktop` uses the extension flow in `Settings -> Extensions`; it is separate from the regular `+ -> Connectors` setup flow.
+- If `Codex App` or `Cursor` were already open during installation, restart them before first use so they reload the new MCP config.
+
+Examples for `Codex / Codex App`:
 - `$Local Figma Port build this component`
 - `$Local Figma Port generate layout with Tailwind`
 - `$Local Figma Port extract styles and structure`
-
-You can check what is in MCP now:
 - `$Local Figma Port what do you see?`
+
+Examples for agents without the `$Local Figma Port` alias:
+- `Use the local-figma-port MCP server to build this component`
+- `Use the Local Figma Port tools to extract styles and structure`
+- `What do you see in the local-figma-port MCP server right now?`
 
 ## Model Recommendations
 
@@ -64,6 +73,7 @@ For best results, use strong coding agents backed by large models.
 Recommended environments:
 - Codex / Codex App
 - Claude Code
+- Claude Desktop
 - Cursor
 
 These tools provide sufficient reasoning and context handling to work effectively with Local Figma Port.
@@ -154,6 +164,9 @@ Instead of asking an agent to reason over an entire design system, you give it e
 - Node.js LTS
 - On macOS and Linux: `sqlite3` must be installed with `FTS5` enabled
 
+If you plan to install the `Claude Code` target, install `Claude Code` first so
+the `claude` CLI is available.
+
 On Windows, the release bootstrap installer can install Node.js automatically
 if it is missing, and the Windows bundle ships its own `sqlite3.exe`.
 On macOS, the release bootstrap installer can install Node.js and a Homebrew
@@ -207,7 +220,7 @@ Uninstall:
 ./scripts/uninstall/linux.sh
 ```
 
-Uses the native bash installer for Codex, Claude Code, and Cursor.
+Uses the native bash installer for Codex, Claude Code, Claude Desktop, and Cursor.
 
 ### macOS
 
@@ -223,10 +236,16 @@ The bootstrap script:
 - downloads the matching prebuilt macOS bundle from GitHub Releases
 - installs Node.js and a Homebrew `sqlite3` build with `FTS5` support if they are missing
 - asks which coding agent to configure and applies the install for that target
-- writes project-local config into the current working directory when you choose `Claude Code` or `Cursor`
+- `Claude Code` requires the `claude` CLI to already be installed; when available, the installer adds a user-scoped subagent and a user-scoped MCP server
+- prepares a local `Claude Desktop` extension bundle (`.mcpb`) when you choose `Claude Desktop`
+- reuses a prebuilt Claude Desktop extension payload from the release bundle, so release installs do not need a fresh `npm install` for the Desktop extension
+- installs a global `Cursor` MCP config in `~/.cursor/mcp.json` when you choose `Cursor`
 
-If you are installing for `Claude Code` or `Cursor`, run the command from the
-workspace root you want to configure.
+For `Claude Desktop`, the installer prints the local `.mcpb` path. Install that
+file from `Claude Desktop -> Settings -> Extensions -> Install extension from file...`.
+On Windows, follow that path manually inside `Claude Desktop`; the installer
+does not rely on `.mcpb` file associations because they are not always
+registered correctly.
 
 If you are building from a checked-out repository instead of using a release
 bundle, see [Build](#build).
@@ -251,10 +270,14 @@ The bootstrap script:
 - downloads the matching prebuilt Windows bundle from GitHub Releases
 - installs PowerShell 7 and Node.js LTS if they are missing
 - asks which coding agent to configure and applies the install for that target
-- writes project-local config into the current working directory when you choose `Claude Code` or `Cursor`
+- offers separate `Claude Code` and `Claude Desktop` targets on Windows; `Claude Code` requires the `claude` CLI, while `Claude Desktop` prepares a local `.mcpb` extension bundle
+- reuses a prebuilt Claude Desktop extension payload from the release bundle when available, so release installs avoid a fresh Desktop-extension dependency install
+- installs a global `Cursor` MCP config in `~/.cursor/mcp.json` when you choose `Cursor`
 
-If you are installing for `Claude Code` or `Cursor`, run the command from the
-workspace root you want to configure.
+For `Claude Desktop`, the installer prints the local `.mcpb` path. Install that
+file from `Claude Desktop -> Settings -> Extensions -> Install extension from file...`.
+The installer also tries to open that `.mcpb` automatically; if no install
+dialog appears, use the printed path manually.
 
 If you are building from a checked-out repository instead of using a release
 bundle, see [Build](#build).
@@ -277,10 +300,23 @@ Supported target numbers:
 
 - `1` = Codex
 - `2` = Claude Code
-- `3` = Cursor
+- `3` = Claude Desktop
+- `4` = Cursor
 
 The Linux installer validates that the system `sqlite3` CLI supports `FTS5`
 before it finishes.
+
+When you choose `Claude Code`, the Linux installer adds a user-scoped subagent
+and a user-scoped MCP server, but it requires the `claude` CLI to already be
+installed. When you choose `Claude Desktop`, it prepares a local `.mcpb`
+extension bundle. When you choose `Cursor`, it installs a global MCP config in
+`~/.cursor/mcp.json`.
+
+For `Claude Desktop`, the installer prints the local `.mcpb` path. Install that
+file from `Claude Desktop -> Settings -> Extensions -> Install extension from file...`.
+The installer also tries to open that `.mcpb` automatically when the desktop
+session supports it; if no install dialog appears, use the printed path
+manually.
 
 Default state root on Linux:
 
@@ -347,7 +383,9 @@ The source macOS installer builds the Rust importer locally, so `rustc` and
 `cargo` are only required for checked-out repository installs.
 
 The release bootstrap installer downloads a prebuilt importer bundle and does
-not require Rust.
+not require Rust. Current macOS release bundles also include a prebuilt Claude
+Desktop extension payload, so `Claude Desktop` installs do not need to rebuild
+that payload locally.
 
 Release maintainers can build macOS release ZIPs with:
 
@@ -366,13 +404,35 @@ That produces:
 - `out/release/macos/local-figma-port-macos-arm64.zip`
 - `out/release/macos/local-figma-port-macos-x64.zip`
 
+## Uninstall Note
+
+The uninstall scripts remove the local config, generated bundle files, and MCP
+registration they manage. If you installed the `Claude Desktop` extension, also
+remove it manually in `Claude Desktop -> Settings -> Extensions`.
+
 ## Start And Stop The Local MCP Server
 
 > Important: the local MCP server must be started manually before exporting from Figma or asking an agent to use Local Figma Port.
 
 The installers start the server once at the end of installation for validation, but day-to-day work still expects you to start it yourself when you begin a session.
 
-### macOS / Linux
+### macOS Release Bootstrap Install
+
+Start:
+
+```bash
+~/Library/Application\ Support/LocalFigmaPort/bundle/current/scripts/runtime/start.sh
+```
+
+Stop:
+
+```bash
+~/Library/Application\ Support/LocalFigmaPort/bundle/current/scripts/runtime/stop.sh
+```
+
+### Checked-Out Repository Or Extracted Bundle
+
+macOS / Linux:
 
 Start:
 
@@ -386,7 +446,7 @@ Stop:
 ./scripts/runtime/stop.sh
 ```
 
-### Windows
+Windows:
 
 Start:
 
@@ -398,6 +458,21 @@ Stop:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass -File .\scripts\runtime\stop.ps1
+```
+
+If you used the Windows release bootstrap installer instead of running from a
+checked-out repository, use the installed bundle path instead:
+
+Start:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\LocalFigmaPort\bundle\current\scripts\runtime\start.ps1"
+```
+
+Stop:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\LocalFigmaPort\bundle\current\scripts\runtime\stop.ps1"
 ```
 
 By default the server listens on port `7331`.

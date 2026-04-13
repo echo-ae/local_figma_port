@@ -40,3 +40,13 @@ lfp_log_file() {
   local state_root="$1"
   printf '%s/mcp-server.log' "$(lfp_log_dir "$state_root")"
 }
+
+lfp_claude_desktop_dir() {
+  local state_root="$1"
+  printf '%s/claude-desktop' "$state_root"
+}
+
+lfp_claude_desktop_bundle_path() {
+  local state_root="$1"
+  printf '%s/local-figma-port.mcpb' "$(lfp_claude_desktop_dir "$state_root")"
+}

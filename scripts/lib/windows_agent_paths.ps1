@@ -27,6 +27,18 @@ function Get-LfpDefaultCodexAppDataDir {
     return (Join-Path $env:USERPROFILE "AppData/Roaming/Codex")
 }
 
+function Get-LfpClaudeDesktopDir {
+    param([string]$StateDir)
+
+    return (Join-Path $StateDir "claude-desktop")
+}
+
+function Get-LfpClaudeDesktopBundlePath {
+    param([string]$StateDir)
+
+    return (Join-Path (Get-LfpClaudeDesktopDir -StateDir $StateDir) "local-figma-port.mcpb")
+}
+
 function Resolve-LfpCodexAppInstallation {
     param(
         [string]$CodexAppData = "",

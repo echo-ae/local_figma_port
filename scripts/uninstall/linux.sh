@@ -10,9 +10,11 @@ STATE_ROOT_DIR="${LOCAL_FIGMA_PORT_STATE_DIR:-$(lfp_default_state_root)}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
 CLAUDE_HOME_DIR="${CLAUDE_HOME:-$HOME/.claude}"
 CURSOR_HOME_DIR="${CURSOR_HOME:-$HOME/.cursor}"
+CLAUDE_CLI_PATH=""
 
 SELECT_CODEX=0
 SELECT_CLAUDE=0
+SELECT_CLAUDE_DESKTOP=0
 SELECT_CURSOR=0
 EXPLICIT_SELECTION=0
 PURGE_DATA=0
@@ -26,9 +28,10 @@ usage: ./scripts/uninstall/linux.sh [options]
 options:
   --codex                 uninstall from Codex
   --claude-code           uninstall from Claude Code
+  --claude-desktop        uninstall from Claude Desktop
   --cursor                uninstall from Cursor
   --all                   uninstall from all supported targets
-  --targets LIST          uninstall from comma-separated target numbers: 1=Codex, 2=Claude Code, 3=Cursor
+  --targets LIST          uninstall from comma-separated target numbers: 1=Codex, 2=Claude Code, 3=Claude Desktop, 4=Cursor
   --purge                 remove stable Local Figma Port state data
   --keep-data             keep stable Local Figma Port state data
   --project-root PATH     override repository root
@@ -49,7 +52,10 @@ apply_target_token() {
     2|claude|claude-code|claude_code)
       SELECT_CLAUDE=1
       ;;
-    3|cursor)
+    3|claude-desktop|claude_desktop|claude-desktop-app)
+      SELECT_CLAUDE_DESKTOP=1
+      ;;
+    4|cursor)
       SELECT_CURSOR=1
       ;;
     *)
@@ -64,10 +70,12 @@ apply_targets_csv() {
   local token
   SELECT_CODEX=0
   SELECT_CLAUDE=0
+  SELECT_CLAUDE_DESKTOP=0
   SELECT_CURSOR=0
   if [[ "$csv" == "all" || "$csv" == "ALL" ]]; then
     SELECT_CODEX=1
     SELECT_CLAUDE=1
+    SELECT_CLAUDE_DESKTOP=1
     SELECT_CURSOR=1
     EXPLICIT_SELECTION=1
     return
@@ -93,6 +101,11 @@ while [[ $# -gt 0 ]]; do
       EXPLICIT_SELECTION=1
       shift
       ;;
+    --claude-desktop)
+      SELECT_CLAUDE_DESKTOP=1
+      EXPLICIT_SELECTION=1
+      shift
+      ;;
     --cursor)
       SELECT_CURSOR=1
       EXPLICIT_SELECTION=1
@@ -101,6 +114,7 @@ while [[ $# -gt 0 ]]; do
     --all)
       SELECT_CODEX=1
       SELECT_CLAUDE=1
+      SELECT_CLAUDE_DESKTOP=1
       SELECT_CURSOR=1
       EXPLICIT_SELECTION=1
       shift
@@ -174,12 +188,36 @@ require_cmd() {
   fi
 }
 
+try_resolve_claude_cli() {
+  if [[ -n "$CLAUDE_CLI_PATH" && -x "$CLAUDE_CLI_PATH" ]]; then
+    return 0
+  fi
+  if command -v claude >/dev/null 2>&1; then
+    CLAUDE_CLI_PATH="$(command -v claude)"
+    return 0
+  fi
+
+  local candidate
+  for candidate in \
+    "$HOME/.local/bin/claude" \
+    "$HOME/.claude/local/claude" \
+    "/usr/local/bin/claude" \
+    "/usr/bin/claude"
+  do
+    if [[ -x "$candidate" ]]; then
+      CLAUDE_CLI_PATH="$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 STATE_ROOT_DIR="$(normalize_path "$STATE_ROOT_DIR")"
+CLAUDE_DESKTOP_BUNDLE_PATH="$(lfp_claude_desktop_bundle_path "$STATE_ROOT_DIR")"
 TIMESTAMP="$(date +%Y%m%d%H%M%S)"
 
-AGENTS_MARKER_START="<!-- FIGMA PORT MANAGED BLOCK START -->"
-AGENTS_MARKER_END="<!-- FIGMA PORT MANAGED BLOCK END -->"
 CLAUDE_MARKER_START="<!-- FIGMA PORT CLAUDE BLOCK START -->"
 CLAUDE_MARKER_END="<!-- FIGMA PORT CLAUDE BLOCK END -->"
 CODEX_TOML_MARKER_START="# >>> FIGMA PORT MCP START >>>"
@@ -191,15 +229,17 @@ print_target_menu() {
 Select targets to uninstall:
   [1] Codex
   [2] Claude Code
-  [3] Cursor
+  [3] Claude Desktop
+  [4] Cursor
 
-Enter numbers separated by commas, or use 'all'. Example: 1,2,3
+Enter numbers separated by commas, or use 'all'. Example: 1,2,4
 EOF
 }
 
 run_interactive_selection() {
   SELECT_CODEX=1
   SELECT_CLAUDE=1
+  SELECT_CLAUDE_DESKTOP=1
   SELECT_CURSOR=1
 
   while true; do
@@ -209,7 +249,7 @@ run_interactive_selection() {
       choice="all"
     fi
     apply_targets_csv "$choice"
-    if [[ "$SELECT_CODEX" -eq 0 && "$SELECT_CLAUDE" -eq 0 && "$SELECT_CURSOR" -eq 0 ]]; then
+    if [[ "$SELECT_CODEX" -eq 0 && "$SELECT_CLAUDE" -eq 0 && "$SELECT_CLAUDE_DESKTOP" -eq 0 && "$SELECT_CURSOR" -eq 0 ]]; then
       echo "[uninstall-linux] select at least one target." >&2
       continue
     fi
@@ -285,10 +325,10 @@ NODE
 
 preflight_project_json_configs() {
   if [[ "$SELECT_CLAUDE" -eq 1 ]]; then
-    validate_json_file_if_present "$PROJECT_ROOT/.mcp.json" "Claude project MCP config"
+    validate_json_file_if_present "$PROJECT_ROOT/.mcp.json" "legacy Claude project MCP config"
   fi
   if [[ "$SELECT_CURSOR" -eq 1 ]]; then
-    validate_json_file_if_present "$PROJECT_ROOT/.cursor/mcp.json" "Cursor project MCP config"
+    validate_json_file_if_present "$CURSOR_HOME_DIR/mcp.json" "Cursor global MCP config"
   fi
 }
 
@@ -431,15 +471,16 @@ codex_is_configured() {
 }
 
 cursor_is_configured() {
-  json_has_local_server "$PROJECT_ROOT/.cursor/mcp.json"
+  json_has_local_server "$CURSOR_HOME_DIR/mcp.json"
 }
 
 print_summary() {
   echo
   echo "[uninstall-linux] summary"
-  [[ "$SELECT_CODEX" -eq 1 ]] && echo "  - Codex"
-  [[ "$SELECT_CLAUDE" -eq 1 ]] && echo "  - Claude Code"
-  [[ "$SELECT_CURSOR" -eq 1 ]] && echo "  - Cursor"
+  if [[ "$SELECT_CODEX" -eq 1 ]]; then echo "  - Codex"; fi
+  if [[ "$SELECT_CLAUDE" -eq 1 ]]; then echo "  - Claude Code"; fi
+  if [[ "$SELECT_CLAUDE_DESKTOP" -eq 1 ]]; then echo "  - Claude Desktop"; fi
+  if [[ "$SELECT_CURSOR" -eq 1 ]]; then echo "  - Cursor"; fi
   echo "  - project root: $PROJECT_ROOT"
   echo "  - state root: $STATE_ROOT_DIR"
   if [[ "$PURGE_DATA" -eq 1 ]]; then
@@ -447,6 +488,7 @@ print_summary() {
   else
     echo "  - data: keep"
   fi
+  return 0
 }
 
 print_summary
@@ -454,31 +496,30 @@ print_summary
 preflight_project_json_configs
 LOCAL_FIGMA_PORT_STATE_DIR="$STATE_ROOT_DIR" "$PROJECT_ROOT/scripts/runtime/stop.sh" || true
 
-KEEP_AGENTS=0
-if [[ "$SELECT_CODEX" -eq 0 ]] && codex_is_configured; then
-  KEEP_AGENTS=1
-fi
-if [[ "$SELECT_CURSOR" -eq 0 ]] && cursor_is_configured; then
-  KEEP_AGENTS=1
-fi
-
 if [[ "$SELECT_CODEX" -eq 1 ]]; then
   remove_codex_toml_block "$CODEX_HOME_DIR/config.toml"
   remove_path "$CODEX_HOME_DIR/skills/local-figma-port"
 fi
 
 if [[ "$SELECT_CLAUDE" -eq 1 ]]; then
+  if try_resolve_claude_cli; then
+    "$CLAUDE_CLI_PATH" mcp remove local-figma-port --scope user >/dev/null 2>&1 || true
+  fi
+  remove_json_mcp_server "$HOME/.claude.json"
   remove_json_mcp_server "$PROJECT_ROOT/.mcp.json"
   remove_markdown_block "$PROJECT_ROOT/CLAUDE.md" "$CLAUDE_MARKER_START" "$CLAUDE_MARKER_END"
+  remove_path "$CLAUDE_HOME_DIR/agents/local-figma-port.md"
   remove_path "$CLAUDE_HOME_DIR/skills/local-figma-port"
 fi
 
-if [[ "$SELECT_CURSOR" -eq 1 ]]; then
-  remove_json_mcp_server "$PROJECT_ROOT/.cursor/mcp.json"
+if [[ "$SELECT_CLAUDE_DESKTOP" -eq 1 ]]; then
+  remove_path "$CLAUDE_DESKTOP_BUNDLE_PATH"
+  echo "[uninstall-linux] note: if you already installed the Local Figma Port extension in Claude Desktop, remove it from Claude Desktop Settings -> Extensions."
 fi
 
-if [[ "$KEEP_AGENTS" -eq 0 && ( "$SELECT_CODEX" -eq 1 || "$SELECT_CURSOR" -eq 1 ) ]]; then
-  remove_markdown_block "$PROJECT_ROOT/AGENTS.md" "$AGENTS_MARKER_START" "$AGENTS_MARKER_END"
+if [[ "$SELECT_CURSOR" -eq 1 ]]; then
+  remove_json_mcp_server "$CURSOR_HOME_DIR/mcp.json"
+  remove_json_mcp_server "$PROJECT_ROOT/.cursor/mcp.json"
 fi
 
 if [[ "$PURGE_DATA" -eq 1 ]]; then

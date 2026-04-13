@@ -16,7 +16,7 @@ usage() {
 usage: ./mac-install.sh [options]
 
 options:
-  --target NAME          target to configure: codex, codex-app, claude-code, cursor
+  --target NAME          target to configure: codex, codex-app, claude-code, claude-desktop, cursor
   --architecture ARCH    override architecture: arm64, x64, amd64
   --github-repo REPO     GitHub repo slug hosting release bundles (default: echo-ae/local_figma_port)
   --release-tag TAG      install from a specific GitHub release tag instead of latest
@@ -218,7 +218,8 @@ select_target() {
     echo "  [1] Codex"
     echo "  [2] Codex App"
     echo "  [3] Claude Code"
-    echo "  [4] Cursor"
+    echo "  [4] Claude Desktop"
+    echo "  [5] Cursor"
     echo
     prompt_read choice "> "
     normalized="$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')"
@@ -235,7 +236,11 @@ select_target() {
         SELECTED_TARGET="claude-code"
         return
         ;;
-      4|cursor)
+      4|claude-desktop|claude_desktop|claude-desktop-app)
+        SELECTED_TARGET="claude-desktop"
+        return
+        ;;
+      5|cursor)
         SELECTED_TARGET="cursor"
         return
         ;;
@@ -251,7 +256,8 @@ target_token() {
     codex) printf '%s\n' "1" ;;
     codex-app|codex_app) printf '%s\n' "2" ;;
     claude-code|claude_code|claude) printf '%s\n' "3" ;;
-    cursor) printf '%s\n' "4" ;;
+    claude-desktop|claude_desktop|claude-desktop-app) printf '%s\n' "4" ;;
+    cursor) printf '%s\n' "5" ;;
     *)
       echo "[mac-install] unknown target: $1" >&2
       exit 1

@@ -25,6 +25,7 @@ TypeScript MCP server module for querying imported design data from SQLite and `
   - `design://selection/{selectionId}`
   - `design://previews`
   - `design://preview/{fileName}.png`
+  - `design://preview-file/{fileName}.png`
 - Serve UI-kit resources:
   - `design://uikit/manifest`
   - `design://uikit/components`
@@ -33,7 +34,7 @@ TypeScript MCP server module for querying imported design data from SQLite and `
   - `design://uikit/tokens`
   - `design://uikit/styles`
 - Expose core tools:
-  - `list_pages`, `list_frames`, `get_node`, `search_nodes`, `search_text`, `find_by_token`, `layout_report`, `get_context_bundle`, `resolve_instance`
+  - `list_pages`, `list_frames`, `get_node`, `search_nodes`, `search_text`, `find_by_token`, `layout_report`, `get_context_bundle`, `resolve_instance`, `resolve_target`, `build_coverage_checklist`
 - Accept local bundle ingestion endpoint:
   - `POST /import-bundle`
   - saves to `imports/` or `import-ui-kit/`
@@ -91,3 +92,16 @@ SQLITE3_BIN=/path/to/sqlite3 \
 DATA_DIR=/path/to/local-figma-port-state/data \
 node dist/mcp-stdio.js
 ```
+
+## Deployment Notes
+
+The same stdio server is deployed through different client integrations:
+
+- `Codex` / `Codex App`
+  - registered through `~/.codex/config.toml`
+- `Claude Code`
+  - registered through the `claude` CLI plus a user subagent
+- `Claude Desktop`
+  - packaged into a local `.mcpb` extension bundle
+- `Cursor`
+  - registered through `~/.cursor/mcp.json`

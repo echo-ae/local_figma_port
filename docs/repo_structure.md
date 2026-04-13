@@ -77,6 +77,11 @@ Important files:
 - `src/schema/validate.ts`
   - schema validation
 
+Release bundles may also contain:
+
+- `claude-desktop-extension-payload/`
+  - prepared runtime payload used to assemble the `Claude Desktop` `.mcpb` extension bundle without rebuilding dependencies locally
+
 ## Contract And Schema Files
 
 ### `schemas/`
@@ -98,6 +103,23 @@ Source-of-truth JSON schemas:
 ### `scripts/`
 
 Installers, start/stop helpers, and verification helpers.
+
+Important areas:
+
+- `install/*`
+  - agent-specific installation flows
+- `uninstall/*`
+  - cleanup for agent registrations and generated artifacts
+- `verify/*`
+  - installation validation for each target environment
+- `runtime/*`
+  - local HTTP/MCP server start/stop helpers
+- `lib/local_figma_port_state.sh`
+  - canonical runtime state-path helpers
+- `lib/claude_desktop_extension.sh`
+  - shared Claude Desktop extension packaging helpers
+- `release/package-macos.sh`
+  - macOS release packaging, including the optional prebuilt Claude Desktop extension payload
 
 ### `data/`, `imports/`, `import-ui-kit/`
 

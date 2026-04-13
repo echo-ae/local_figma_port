@@ -3,32 +3,40 @@ param(
     [switch]$Codex,
     [switch]$CodexApp,
     [switch]$ClaudeCode,
+    [switch]$ClaudeDesktop,
     [switch]$Cursor,
     [switch]$All,
     [switch]$Purge,
     [switch]$KeepData,
     [string]$Targets,
     [string]$ProjectRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
+    [string]$ConfigRoot = "",
     [string]$StateDir = $(if ($env:LOCAL_FIGMA_PORT_STATE_DIR) { $env:LOCAL_FIGMA_PORT_STATE_DIR } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "LocalFigmaPort" } else { Join-Path $env:USERPROFILE "AppData/Local/LocalFigmaPort" }),
     [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE ".codex" }),
     [string]$CodexAppData = $(if ($env:CODEX_APP_DATA_DIR) { $env:CODEX_APP_DATA_DIR } elseif ($env:APPDATA) { Join-Path $env:APPDATA "Codex" } else { Join-Path $env:USERPROFILE "AppData/Roaming/Codex" }),
     [string]$CodexAppExe = $(if ($env:CODEX_APP_EXE) { $env:CODEX_APP_EXE } elseif ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "Programs/Codex/Codex.exe" } else { Join-Path $env:USERPROFILE "AppData/Local/Programs/Codex/Codex.exe" }),
     [string]$ClaudeHome = $(if ($env:CLAUDE_HOME) { $env:CLAUDE_HOME } else { Join-Path $env:USERPROFILE ".claude" }),
+    [string]$ClaudeDesktopConfig = $(if ($env:CLAUDE_DESKTOP_CONFIG) { $env:CLAUDE_DESKTOP_CONFIG } elseif ($env:APPDATA) { Join-Path $env:APPDATA "Claude/claude_desktop_config.json" } else { Join-Path $env:USERPROFILE "AppData/Roaming/Claude/claude_desktop_config.json" }),
     [string]$CursorHome = (Join-Path $env:USERPROFILE ".cursor")
 )
 
 $LibDir = Join-Path (Split-Path -Parent $PSScriptRoot) "lib"
 . (Join-Path $LibDir "ensure-pwsh7.ps1")
+. (Join-Path $LibDir "windows_agent_paths.ps1")
 Restart-InPwsh7IfNeeded -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters -ForwardArgs $MyInvocation.UnboundArguments
 
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = (Resolve-Path $ProjectRoot).Path
+if ([string]::IsNullOrWhiteSpace($ConfigRoot)) {
+    $ConfigRoot = $ProjectRoot
+} else {
+    New-Item -ItemType Directory -Force -Path $ConfigRoot | Out-Null
+    $ConfigRoot = (Resolve-Path $ConfigRoot).Path
+}
 $StateDir = [System.IO.Path]::GetFullPath($StateDir)
 $Timestamp = Get-Date -Format "yyyyMMddHHmmss"
 
-$AgentsMarkerStart = "<!-- FIGMA PORT MANAGED BLOCK START -->"
-$AgentsMarkerEnd = "<!-- FIGMA PORT MANAGED BLOCK END -->"
 $ClaudeMarkerStart = "<!-- FIGMA PORT CLAUDE BLOCK START -->"
 $ClaudeMarkerEnd = "<!-- FIGMA PORT CLAUDE BLOCK END -->"
 $CodexTomlMarkerStart = "# >>> FIGMA PORT MCP START >>>"
@@ -36,15 +44,16 @@ $CodexTomlMarkerEnd = "# <<< FIGMA PORT MCP END <<<"
 
 function Show-Usage {
     @"
-usage: .\scripts\uninstall\windows.ps1 [-Codex] [-CodexApp] [-ClaudeCode] [-Cursor] [-All] [-Targets LIST] [-Purge] [-KeepData]
+usage: .\scripts\uninstall\windows.ps1 [-Codex] [-CodexApp] [-ClaudeCode] [-ClaudeDesktop] [-Cursor] [-All] [-Targets LIST] [-Purge] [-KeepData]
 
 options:
   -Codex                 uninstall from Codex
   -CodexApp              uninstall from Codex App
   -ClaudeCode            uninstall from Claude Code
+  -ClaudeDesktop         uninstall from Claude Desktop
   -Cursor                uninstall from Cursor
   -All                   uninstall from all supported targets
-  -Targets LIST          uninstall from comma-separated target numbers: 1=Codex, 2=Codex App, 3=Claude Code, 4=Cursor
+  -Targets LIST          uninstall from comma-separated target names or numbers: 1=Codex, 2=Codex App, 3=Claude Code, 4=Claude Desktop, 5=Cursor
   -Purge                 remove stable Local Figma Port state data
   -KeepData              keep stable Local Figma Port state data
 "@
@@ -67,7 +76,11 @@ function Apply-TargetToken {
         "claude" { $script:ClaudeCode = $true; return }
         "claude-code" { $script:ClaudeCode = $true; return }
         "claude_code" { $script:ClaudeCode = $true; return }
-        "4" { $script:Cursor = $true; return }
+        "4" { $script:ClaudeDesktop = $true; return }
+        "claude-desktop" { $script:ClaudeDesktop = $true; return }
+        "claude_desktop" { $script:ClaudeDesktop = $true; return }
+        "claude-desktop-app" { $script:ClaudeDesktop = $true; return }
+        "5" { $script:Cursor = $true; return }
         "cursor" { $script:Cursor = $true; return }
         default { throw "Unknown target token: $Token" }
     }
@@ -79,12 +92,14 @@ function Apply-TargetsCsv {
     $script:Codex = $false
     $script:CodexApp = $false
     $script:ClaudeCode = $false
+    $script:ClaudeDesktop = $false
     $script:Cursor = $false
 
     if ($Csv -match '^\s*all\s*$') {
         $script:Codex = $true
         $script:CodexApp = $true
         $script:ClaudeCode = $true
+        $script:ClaudeDesktop = $true
         $script:Cursor = $true
         return
     }
@@ -300,10 +315,9 @@ function Remove-JsonMcpServer {
 
 function Test-ProjectJsonConfigs {
     if ($ClaudeCode) {
-        Test-JsonFileIfPresent -Path (Join-Path $ProjectRoot ".mcp.json") -Label "Claude project MCP config"
+        Test-JsonFileIfPresent -Path (Join-Path $ConfigRoot ".mcp.json") -Label "legacy Claude project MCP config"
     }
     if ($Cursor) {
-        Test-JsonFileIfPresent -Path (Join-Path $ProjectRoot ".cursor/mcp.json") -Label "Cursor project MCP config"
         Test-JsonFileIfPresent -Path (Join-Path $CursorHome "mcp.json") -Label "Cursor global MCP config"
     }
 }
@@ -315,9 +329,10 @@ function Show-InteractiveSelection {
         Write-Host "  [1] Codex"
         Write-Host "  [2] Codex App"
         Write-Host "  [3] Claude Code"
-        Write-Host "  [4] Cursor"
+        Write-Host "  [4] Claude Desktop"
+        Write-Host "  [5] Cursor"
         Write-Host ""
-        Write-Host "Enter numbers separated by commas, or use 'all'. Example: 1,2,4"
+        Write-Host "Enter numbers separated by commas, or use 'all'. Example: 1,2,5"
         $choice = Read-Host "> "
         if ([string]::IsNullOrWhiteSpace($choice)) {
             $choice = "all"
@@ -328,7 +343,7 @@ function Show-InteractiveSelection {
             Write-Warning $_.Exception.Message
             continue
         }
-        if (-not ($Codex -or $CodexApp -or $ClaudeCode -or $Cursor)) {
+        if (-not ($Codex -or $CodexApp -or $ClaudeCode -or $ClaudeDesktop -or $Cursor)) {
             Write-Warning "Select at least one target."
             continue
         }
@@ -356,6 +371,7 @@ if ($All) {
     $Codex = $true
     $CodexApp = $true
     $ClaudeCode = $true
+    $ClaudeDesktop = $true
     $Cursor = $true
 }
 
@@ -363,7 +379,7 @@ if (-not [string]::IsNullOrWhiteSpace($Targets)) {
     Apply-TargetsCsv -Csv $Targets
 }
 
-$explicitSelection = $Codex -or $CodexApp -or $ClaudeCode -or $Cursor
+$explicitSelection = $Codex -or $CodexApp -or $ClaudeCode -or $ClaudeDesktop -or $Cursor
 if (-not $explicitSelection) {
     Show-InteractiveSelection
 }
@@ -371,27 +387,15 @@ if (-not $explicitSelection) {
 Test-ProjectJsonConfigs
 Resolve-DataMode
 
-$keepAgents = $false
-if (-not $Codex -and (Test-Path (Join-Path $CodexHome "config.toml")) -and (Get-Content -Raw (Join-Path $CodexHome "config.toml")).Contains("[mcp_servers.local-figma-port]")) {
-    $keepAgents = $true
-}
-if (-not $CodexApp -and ((Test-Path $CodexAppData) -or (Test-Path $CodexAppExe))) {
-    $keepAgents = $true
-}
-if (-not $Cursor -and (Test-JsonHasServer (Join-Path $ProjectRoot ".cursor/mcp.json"))) {
-    $keepAgents = $true
-}
-if (-not $Cursor -and (Test-JsonHasServer (Join-Path $CursorHome "mcp.json"))) {
-    $keepAgents = $true
-}
-
 Write-Host ""
 Write-Host "[uninstall-windows] summary"
 if ($Codex) { Write-Host "  - Codex" }
 if ($CodexApp) { Write-Host "  - Codex App" }
 if ($ClaudeCode) { Write-Host "  - Claude Code" }
+if ($ClaudeDesktop) { Write-Host "  - Claude Desktop" }
 if ($Cursor) { Write-Host "  - Cursor" }
 Write-Host "  - project root: $ProjectRoot"
+Write-Host "  - config root: $ConfigRoot"
 Write-Host "  - state root: $StateDir"
 if ($CodexApp) { Write-Host "  - codex app data: $CodexAppData" }
 Write-Host ("  - data: {0}" -f $(if ($Purge) { "purge" } else { "keep" }))
@@ -407,18 +411,52 @@ if ($removeSharedCodex) {
 }
 
 if ($ClaudeCode) {
-    Remove-JsonMcpServer -Path (Join-Path $ProjectRoot ".mcp.json")
-    Remove-MarkdownManagedBlock -Path (Join-Path $ProjectRoot "CLAUDE.md") -StartMarker $ClaudeMarkerStart -EndMarker $ClaudeMarkerEnd
+    $claudeCmd = Get-Command "claude" -ErrorAction SilentlyContinue
+    if (-not $claudeCmd) {
+        $candidates = @(
+            (Join-Path $env:USERPROFILE ".local/bin/claude"),
+            (Join-Path $env:USERPROFILE ".local/bin/claude.cmd"),
+            (Join-Path $env:USERPROFILE ".local/bin/claude.exe"),
+            (Join-Path $env:USERPROFILE ".local/bin/claude.bat"),
+            (Join-Path $env:USERPROFILE ".local/bin/claude.ps1"),
+            (Join-Path $env:USERPROFILE ".claude/local/claude"),
+            (Join-Path $env:USERPROFILE ".claude/local/claude.exe"),
+            (Join-Path $env:USERPROFILE ".claude/local/claude.cmd"),
+            (Join-Path $env:LOCALAPPDATA "Microsoft/WinGet/Links/claude.exe"),
+            (Join-Path $env:LOCALAPPDATA "Microsoft/WinGet/Links/claude.cmd"),
+            (Join-Path $env:APPDATA "npm/claude.cmd"),
+            (Join-Path $env:APPDATA "npm/claude.exe"),
+            (Join-Path $env:APPDATA "npm/claude"),
+            (Join-Path $env:USERPROFILE "AppData/Roaming/npm/claude.cmd"),
+            (Join-Path $env:USERPROFILE "AppData/Roaming/npm/claude.exe"),
+            (Join-Path $env:USERPROFILE "AppData/Roaming/npm/claude")
+        )
+        foreach ($candidate in $candidates) {
+            if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate -PathType Leaf)) {
+                $claudeCmd = [pscustomobject]@{ Source = $candidate }
+                break
+            }
+        }
+    }
+    if ($claudeCmd) {
+        & $claudeCmd.Source mcp remove local-figma-port --scope user | Out-Null
+    }
+    Remove-JsonMcpServer -Path (Join-Path (Split-Path -Parent $ClaudeHome) ".claude.json")
+    Remove-JsonMcpServer -Path (Join-Path $ConfigRoot ".mcp.json")
+    Remove-MarkdownManagedBlock -Path (Join-Path $ConfigRoot "CLAUDE.md") -StartMarker $ClaudeMarkerStart -EndMarker $ClaudeMarkerEnd
+    Remove-PathSafe -Path (Join-Path $ClaudeHome "agents/local-figma-port.md")
     Remove-PathSafe -Path (Join-Path $ClaudeHome "skills/local-figma-port")
 }
 
-if ($Cursor) {
-    Remove-JsonMcpServer -Path (Join-Path $ProjectRoot ".cursor/mcp.json")
-    Remove-JsonMcpServer -Path (Join-Path $CursorHome "mcp.json")
+if ($ClaudeDesktop) {
+    Remove-PathSafe -Path (Get-LfpClaudeDesktopBundlePath -StateDir $StateDir)
+    Remove-JsonMcpServer -Path $ClaudeDesktopConfig
+    Write-Host "[uninstall-windows] note: if you already installed the Local Figma Port extension in Claude Desktop, remove it from Claude Desktop Settings -> Extensions."
 }
 
-if (-not $keepAgents -and ($Codex -or $CodexApp -or $Cursor)) {
-    Remove-MarkdownManagedBlock -Path (Join-Path $ProjectRoot "AGENTS.md") -StartMarker $AgentsMarkerStart -EndMarker $AgentsMarkerEnd
+if ($Cursor) {
+    Remove-JsonMcpServer -Path (Join-Path $CursorHome "mcp.json")
+    Remove-JsonMcpServer -Path (Join-Path $ConfigRoot ".cursor/mcp.json")
 }
 
 if ($Purge) {
