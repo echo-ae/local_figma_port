@@ -1,6 +1,6 @@
 ---
 name: local-figma-port
-description: Use when implementing UI from MCP local-figma-port where nested descendants, partial node reads, or ambiguous style ownership could cause the agent to stop early and guess instead of fully tracing the design source
+description: Use when implementing UI from MCP local-figma-port where nested descendants, mixed-style text runs, partial node reads, or ambiguous style ownership could cause the agent to stop early and guess instead of fully tracing the design source
 short_description: Exact UI replication from the Local Figma Port MCP server
 ---
 
@@ -29,7 +29,7 @@ Do not use this skill as the primary workflow when:
 NO IMPLEMENTATION OR COMPLETION CLAIMS WITHOUT A CLOSED VISUAL TRACE
 ```
 
-A visual trace is closed only when every relevant fill, stroke, radius, spacing, text style, state style, and asset in scope is either:
+A visual trace is closed only when every relevant fill, stroke, radius, spacing, text style, text run, state style, and asset in scope is either:
 
 - traced to a specific `local-figma-port` node or descendant; or
 - explicitly recorded as blocked after exhausting `style`, `styleRefs`, and relevant descendants.
@@ -110,6 +110,7 @@ while frontier is not empty:
 Rules for closing the frontier:
 
 - A node is not resolved just because it has a useful parent payload. It is resolved only when the rendered slice it owns has known fill, stroke, radius, spacing, text, and asset provenance or an explicit blocker.
+- A text node is not resolved until `style.text.textRuns` has been inspected. If `renderHints` says `span-per-segment`, or if multiple `textRuns` have different color/font/weight/size/line-height/letter-spacing/case/decoration, the implementation MUST render ordered inline spans for the runs.
 - Treat `children` and `childrenIds` as a queue for more reads, not proof that the subtree is fully understood.
 - Re-open the frontier immediately if implementation or visual verification reveals any property you did not explicitly trace.
 - If the frontier is non-empty, exploration is not done and completion is forbidden.
@@ -275,7 +276,8 @@ Before writing code:
 - Load the target node with `get_node(nodeId, includeChildren=true)` and seed `Open Frontier` from its `children` / `childrenIds`.
 - Open or initialize the scratchpad and seed its `Open Frontier`, `Coverage Ledger`, and `Fragment Checklist` from the first MCP read.
 - Inspect the immediate children, then explicitly recurse by re-running `get_node(..., includeChildren=true)` for every child that could own visible structure or styling. One `includeChildren` pass is never enough for a non-trivial subtree.
-- For text nodes, inspect the full text style payload.
+- For every `TEXT` node encountered, including nested child payloads, inspect the full `style.text` payload and specifically `style.text.textRuns`.
+- If a `TEXT` node has `renderHints` with `strategy: "span-per-segment"`, or has multiple visually distinct `style.text.textRuns`, treat the runs as the source of truth and render them as ordered inline spans. The parent text container's color is not sufficient proof.
 - For shape/icon/instance nodes, inspect nested children until the renderable geometry is clear.
 - For icon/logo/chevron marks, do not stop at outer bounds or first visible fill. Keep traversing until exact geometry provenance is identified at asset level, vector-child level, or a `placeholder-blocked` unresolved-icon path.
 - For containers, keep descending until visual ownership is clear for border, corner radius, fill, spacing, and selection states. If a selected state is rendered by a nested rectangle or instance child, that child is the source of truth, not the parent label.
@@ -309,6 +311,7 @@ Write down, explicitly:
 - All child sizes.
 - All gaps, paddings, and alignment rules.
 - Text styles for every unique text node.
+- Per-run text styles for every mixed-style text node, including run order, characters, color, font, weight, size, line-height, letter-spacing, case, and decoration.
 - Fill/stroke/effect rules for every visual container.
 - Corner radius rules.
 - Which nodes are merely labels and which are actual shapes/text.
@@ -352,6 +355,18 @@ Also create and maintain a `Fragment Checklist` entry for each rendered slice or
 - verification note or blocker
 
 If a fragment is still `[ ]`, `[~]`, or `[-]`, it is not safely forgotten. Keep it in the scratchpad until it is either `[x]` or explicitly accepted by the user as blocked/deferred.
+
+For every visible text fragment, also record text-run closure proof using this exact structure:
+
+- text fragment
+- source node id/path
+- source path: `node.renderHints` / `node.style.text.textRuns` / `node.style.text`
+- run count
+- per-run visual signatures: characters + color + font + weight + size + line-height + letter-spacing + case + decoration
+- implementation form: single text node / ordered inline spans
+- verification status
+
+If `renderHints` says `span-per-segment`, or if multiple `textRuns` differ visually, `implementation form` must be `ordered inline spans`. A single-color text node is a blocking defect for that fragment.
 
 For every visible icon-like fragment, also record icon closure proof using this exact structure:
 
@@ -480,6 +495,7 @@ Before claiming completion, check:
 - dimensions match the node data;
 - spacing matches `layoutIntent`/`computed`;
 - text styles match every inspected text node;
+- mixed-style text nodes with `renderHints: span-per-segment` or visually distinct `textRuns` are rendered as ordered inline spans, not flattened into one inherited color/style;
 - corner radii and borders are present where the design indicates them;
 - icons match the design asset, not a substitute, unless they are explicitly listed in `Unresolved Icons` as placeholder-blocked;
 - every visible icon has icon-closure proof recorded as `exact asset`, `exact vector children`, or `placeholder-blocked`;
@@ -520,6 +536,7 @@ STOP and return to inspection instead of pushing forward when:
 - you used a nearby theme token because the exact source was inconvenient;
 - you are inferring behavior from a layer name;
 - you are relying on memory of the design instead of a current node payload;
+- you are about to render a mixed-style text node as one single-color string without proving `textRuns` are visually uniform;
 - you notice a visible mismatch after implementation;
 - a property looks inherited or default but was not actually traced;
 - the scratchpad no longer reflects the latest `Open Frontier`, `Coverage Ledger`, or implemented fragments.
@@ -568,6 +585,8 @@ For every target node, verify these fields before implementation:
 - `style.strokes`
 - `style.effects`
 - `style.text`
+- `style.text.textRuns`
+- `renderHints`
 - `styleRefs`
 - `computed.contentBox`
 - `computed.gapsBetween`
@@ -598,6 +617,19 @@ Wrong:
 Right:
 
 - Match `Roboto`, `14`, `400`, `20px`, `0%`, original text case if that is what the node says
+
+### Failure: flattening mixed-style text
+
+Wrong:
+
+- Read a parent frame or text node, see one meta row, and render `Этаж 5 из 10` as one gray string
+- Ignore `renderHints: span-per-segment` or `style.text.textRuns` because the full text content is already known
+
+Right:
+
+- Inspect every `TEXT` descendant that owns the visible copy
+- If text runs differ, render each run as an ordered inline span using the run's own characters and style
+- Record text-run closure proof in the scratchpad before marking the fragment complete
 
 ### Failure: dropping radii or borders because the first payload is incomplete
 
@@ -709,6 +741,7 @@ The task is not done unless all of the following are true:
 
 - visual geometry matches the inspected node data;
 - typography matches the inspected text nodes;
+- every mixed-style text node with visually distinct `textRuns` is implemented as ordered inline spans and has text-run closure proof in the scratchpad;
 - block styling matches fills, strokes, effects, and radii from the design;
 - no border, radius, or spacing value was added from guesswork before exhausting `style`, `styleRefs`, and relevant descendants;
 - no implementation choice was justified solely by a layer name;
