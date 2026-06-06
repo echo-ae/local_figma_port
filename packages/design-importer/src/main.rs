@@ -2040,11 +2040,8 @@ fn compile_schema(schema: &Value) -> Result<JSONSchema> {
 
 fn find_repo_file(rel: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir()?;
-    for dir in cwd.ancestors() {
-        let candidate = dir.join(rel);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
+    if let Some(path) = find_file_in_ancestors(&cwd, rel) {
+        return Ok(path);
     }
 
     if let Ok(repo_root) = std::env::var("REPO_ROOT") {
@@ -2054,7 +2051,25 @@ fn find_repo_file(rel: &str) -> Result<PathBuf> {
         }
     }
 
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            if let Some(path) = find_file_in_ancestors(parent, rel) {
+                return Ok(path);
+            }
+        }
+    }
+
     Err(anyhow!("cannot resolve required file: {rel}"))
+}
+
+fn find_file_in_ancestors(start: &Path, rel: &str) -> Option<PathBuf> {
+    for dir in start.ancestors() {
+        let candidate = dir.join(rel);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn validate_chunk_contract(input_dir: &Path, export: &PluginExport) -> bool {
@@ -2149,6 +2164,9 @@ fn collapse_spaces(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static PROCESS_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn normalize_layout_drops_none_mode() {
@@ -2207,6 +2225,35 @@ mod tests {
                 ("var:one".to_string(), "ref".to_string()),
                 ("var:two".to_string(), "ref".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn find_repo_file_resolves_from_executable_when_cwd_is_elsewhere() {
+        let _guard = PROCESS_ENV_LOCK.lock().expect("test env lock poisoned");
+        let original_cwd = std::env::current_dir().expect("cwd should be readable");
+        let original_repo_root = std::env::var_os("REPO_ROOT");
+        let temp_cwd = std::env::temp_dir().join(format!(
+            "design-importer-cwd-{}",
+            std::process::id()
+        ));
+
+        fs::create_dir_all(&temp_cwd).expect("temp cwd should be creatable");
+        std::env::remove_var("REPO_ROOT");
+        std::env::set_current_dir(&temp_cwd).expect("temp cwd should be usable");
+
+        let resolved = find_repo_file("schemas/plugin-export.v1.schema.json");
+
+        std::env::set_current_dir(original_cwd).expect("cwd should be restorable");
+        match original_repo_root {
+            Some(value) => std::env::set_var("REPO_ROOT", value),
+            None => std::env::remove_var("REPO_ROOT"),
+        }
+
+        assert!(
+            resolved
+                .expect("schema should resolve from test executable path")
+                .ends_with("schemas/plugin-export.v1.schema.json")
         );
     }
 }
